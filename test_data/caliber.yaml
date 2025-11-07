@@ -1,0 +1,12 @@
+config:
+  caliber_address:
+    type: "address"
+    value: "0xd1da9924c8ea15a8e35951b4702aa4937a9dd70a"
+
+positions:
+  - id: "241963968685402655309198654686298022078"
+    group_id: "0"
+    tags:
+      - "test:test"
+    description: "Aave v3 supply WETH"
+    instructions: !include "./instructions/aave3-supply-weth.yaml"

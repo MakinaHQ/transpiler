@@ -1,0 +1,50 @@
+[package]
+name = "transpiler"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# ethereum
+alloy = { version = "1.0.42", features = ["full"] }
+
+# tokio
+tokio = { version = "1.44.2", features = ["full"] }
+
+# clap
+clap = { version = "4.5.37", features = ["derive"] }
+
+# rand
+rand = "0.9.0"
+
+# saphyr
+saphyr = "0.0.4"
+saphyr-parser = "0.0.4"
+
+#serde
+serde = { version = "1.0.219", features = ["derive"] }
+serde_repr = "0.1.20"
+
+# toml
+toml = "0.8.20"
+
+# rate limiting
+governor = "0.10.1"
+
+# tracing and errors
+thiserror = "2"
+eyre = "0.6.12"
+color-eyre = "0.6"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+
+# weiroll
+weiroll = { git = "https://github.com/dantop114/weiroll-rs.git", rev = "93ad6a8fa719c48bc391d6ddbeb3aa2879f87e30" }
+
+# formatting
+dprint-plugin-toml = "0.7.0"
+
+# general
+itertools = "0.14.0"
+regex = "1.11.1"
+indexmap = "2.11.0"
