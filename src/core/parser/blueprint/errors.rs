@@ -78,6 +78,8 @@ pub enum BlueprintParserError {
         field_path: String,
         found_type: String,
     },
+    #[error("YAML parsing error: {0}")]
+    YamlParse(#[from] saphyr::ScanError),
 }
 
 impl From<SolTypeError> for BlueprintParserError {

@@ -37,7 +37,7 @@ pub enum SolTypeError {
 
 pub type SolTypeResult<T> = Result<T, SolTypeError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct YamlSolValue {
     pub r#type: DynSolType,
     pub value: DynSolValue,

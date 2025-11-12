@@ -11,6 +11,7 @@ use core::transpiler::get_rootfile_from_positions;
 use std::path::PathBuf;
 
 use eyre::eyre;
+use miette::miette;
 
 use crate::check::Check;
 use crate::cli::Command;
@@ -18,26 +19,33 @@ use crate::errors::Error;
 use crate::errors::Result;
 use crate::types::Rootfile;
 
-pub async fn run(cli: &cli::Cli) -> Result<()> {
-    color_eyre::install().map_err(Error::Other)?;
-
+pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
     if !cli.input_file.is_file() {
         return Err(Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("input file {} not found", cli.input_file.display()),
-        )));
+        )))
+        .map_err(|err| miette!("{}", err));
     }
 
-    let parsed = PositionParser::new(cli.input_file.clone()).parse()?;
+    let parsed = PositionParser::new(cli.input_file.clone())
+        .parse()
+        .map_err(|err| miette!("{}", err))?;
 
     if let Some(Command::Check) = cli.command {
         let check = Check::new(cli.input_file.clone(), parsed, cli.github_errors);
-        return check.all_addresses_verified().await.map_err(Into::into);
+        return check
+            .all_addresses_verified()
+            .await
+            .map_err(|err| miette!("{}", err));
     }
 
-    let rootfile = get_rootfile_from_positions(parsed.positions)?;
+    let rootfile =
+        get_rootfile_from_positions(parsed.positions).map_err(|err| miette!("{}", err))?;
 
-    write_rootfile(&rootfile, &cli.output_file)
+    write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))?;
+
+    Ok(())
 }
 
 /// Writes formatted rootfile to path

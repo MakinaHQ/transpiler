@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::read_to_string;
 use std::path::{Path, PathBuf};
@@ -76,9 +76,18 @@ impl BlueprintParser {
         Ok(Blueprint {
             path: path.to_path_buf(),
             protocol,
-            constants,
-            inputs,
-            actions,
+            constants: constants
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            inputs: inputs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            actions: actions
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
         })
     }
 
@@ -86,15 +95,15 @@ impl BlueprintParser {
     fn parse_constants(
         &self,
         root_map: &Mapping,
-    ) -> BlueprintResult<HashMap<String, YamlSolValue>> {
+    ) -> BlueprintResult<BTreeMap<String, YamlSolValue>> {
         // Constants are optional.
         let Some(constants_yaml) =
             helpers::get_optional_mapping_field(root_map, "constants", "root")?
         else {
-            return Ok(HashMap::new());
+            return Ok(BTreeMap::new());
         };
 
-        let mut constants = HashMap::new();
+        let mut constants = BTreeMap::new();
         for (key_yaml, value_yaml) in constants_yaml.iter() {
             // Get the key as a string.
             let key = helpers::get_string(key_yaml, "constants key")?;
@@ -110,14 +119,17 @@ impl BlueprintParser {
     }
 
     /// Parse the inputs section.
-    fn parse_inputs(&self, root_map: &Mapping) -> BlueprintResult<HashMap<String, BlueprintInput>> {
+    fn parse_inputs(
+        &self,
+        root_map: &Mapping,
+    ) -> BlueprintResult<BTreeMap<String, BlueprintInput>> {
         // Inputs are optional.
         let Some(inputs_yaml) = helpers::get_optional_mapping_field(root_map, "inputs", "root")?
         else {
-            return Ok(HashMap::new());
+            return Ok(BTreeMap::new());
         };
 
-        let mut inputs = HashMap::new();
+        let mut inputs = BTreeMap::new();
         for (key_yaml, value_yaml) in inputs_yaml.iter() {
             let name = helpers::get_string(key_yaml, "inputs key")?;
             let field_path = format!("inputs.{name}");
@@ -134,13 +146,13 @@ impl BlueprintParser {
     fn parse_actions(
         &self,
         root_map: &Mapping,
-        inputs: &HashMap<String, BlueprintInput>,
-        constants: &HashMap<String, YamlSolValue>,
-    ) -> BlueprintResult<HashMap<String, BlueprintAction>> {
+        inputs: &BTreeMap<String, BlueprintInput>,
+        constants: &BTreeMap<String, YamlSolValue>,
+    ) -> BlueprintResult<BTreeMap<String, BlueprintAction>> {
         // Actions are required.
         let actions_yaml = helpers::get_mapping_field(root_map, "actions", "root")?;
 
-        let mut actions = HashMap::new();
+        let mut actions = BTreeMap::new();
         for (key_yaml, action_yaml) in actions_yaml.iter() {
             let action_name = helpers::get_string(key_yaml, "actions key")?;
             let field_path = format!("actions.{action_name}");
@@ -158,15 +170,15 @@ impl BlueprintParser {
         &self,
         action_map: &Mapping,
         action_path: &str, // Path up to this map, e.g. "actions.my_action"
-        inputs: &HashMap<String, BlueprintInput>,
-        constants: &HashMap<String, YamlSolValue>,
+        inputs: &BTreeMap<String, BlueprintInput>,
+        constants: &BTreeMap<String, YamlSolValue>,
     ) -> BlueprintResult<BlueprintAction> {
         // Parse input slots first (optional).
         let input_slots = self.parse_input_slots(action_map, action_path)?;
 
         // Initialize structures to track return values across calls.
-        let mut returns_mapping: HashMap<String, usize> = HashMap::new(); // name -> call_index
-        let mut returns_definitions: HashMap<String, BlueprintReturn> = HashMap::new(); // name -> definition
+        let mut returns_mapping: BTreeMap<String, usize> = BTreeMap::new(); // name -> call_index
+        let mut returns_definitions: BTreeMap<String, BlueprintReturn> = BTreeMap::new(); // name -> definition
 
         // Parse calls (required).
         let calls_yaml = helpers::get_sequence_field(action_map, "calls", action_path)?;
@@ -207,7 +219,10 @@ impl BlueprintParser {
 
         Ok(BlueprintAction {
             calls,
-            returns_mapping,
+            returns_mapping: returns_mapping
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
             reserved_slots,
             input_slots,
         })
@@ -315,10 +330,10 @@ impl BlueprintParser {
         index: usize, // Index of the call within the action's calls array
         call_map: &Mapping,
         call_path: &str, // e.g. "actions.my_action.calls[0]"
-        returns_mapping: &mut HashMap<String, usize>,
-        returns_definitions: &mut HashMap<String, BlueprintReturn>,
-        constants: &HashMap<String, YamlSolValue>,
-        inputs: &HashMap<String, BlueprintInput>,
+        returns_mapping: &mut BTreeMap<String, usize>,
+        returns_definitions: &mut BTreeMap<String, BlueprintReturn>,
+        constants: &BTreeMap<String, YamlSolValue>,
+        inputs: &BTreeMap<String, BlueprintInput>,
         input_slots: &IndexMap<String, BlueprintInputSlot>,
     ) -> BlueprintResult<BlueprintCall> {
         // Parse the description first. Optional.
@@ -399,8 +414,8 @@ impl BlueprintParser {
         &self,
         target_yaml: &Yaml,
         field_path: &str,
-        constants: &HashMap<String, YamlSolValue>,
-        inputs: &HashMap<String, BlueprintInput>,
+        constants: &BTreeMap<String, YamlSolValue>,
+        inputs: &BTreeMap<String, BlueprintInput>,
     ) -> BlueprintResult<BlueprintTarget> {
         let target_str = helpers::get_string(target_yaml, field_path)?;
 
@@ -475,8 +490,8 @@ impl BlueprintParser {
         &self,
         action_map: &Mapping,
         action_path: &str,
-        returns: &HashMap<String, BlueprintReturn>,
-        constants: &HashMap<String, YamlSolValue>,
+        returns: &BTreeMap<String, BlueprintReturn>,
+        constants: &BTreeMap<String, YamlSolValue>,
     ) -> BlueprintResult<Vec<BlueprintReservedSlot>> {
         let Some(reserved_slots_yaml) =
             helpers::get_optional_sequence_field(action_map, "reserved_slots", action_path)?
@@ -550,9 +565,9 @@ impl BlueprintParser {
         &self,
         param_map: &Mapping,
         param_path: &str, // e.g., "actions.my_action.calls[0].parameters[1]"
-        returns: &HashMap<String, BlueprintReturn>,
-        constants: &HashMap<String, YamlSolValue>,
-        inputs: &HashMap<String, BlueprintInput>,
+        returns: &BTreeMap<String, BlueprintReturn>,
+        constants: &BTreeMap<String, YamlSolValue>,
+        inputs: &BTreeMap<String, BlueprintInput>,
         input_slots: &IndexMap<String, BlueprintInputSlot>,
     ) -> BlueprintResult<BlueprintParameter> {
         // Get the declared parameter type.
@@ -734,9 +749,9 @@ impl BlueprintParser {
         expected_type: &DynSolType,
         description: Option<&str>,
         field_path: &str, // For error reporting
-        returns: &HashMap<String, BlueprintReturn>,
-        constants: &HashMap<String, YamlSolValue>,
-        inputs: &HashMap<String, BlueprintInput>,
+        returns: &BTreeMap<String, BlueprintReturn>,
+        constants: &BTreeMap<String, YamlSolValue>,
+        inputs: &BTreeMap<String, BlueprintInput>,
         input_slots: &IndexMap<String, BlueprintInputSlot>,
     ) -> BlueprintResult<BlueprintParameter> {
         let caps = self.template_regex.captures(template_str).ok_or_else(|| {
@@ -842,8 +857,8 @@ impl BlueprintParser {
         expected_type: &DynSolType, // Must be scalar, validated before calling
         field_path: &str,           // For error reporting
         description: Option<&str>,
-        returns: &HashMap<String, BlueprintReturn>,
-        constants: &HashMap<String, YamlSolValue>,
+        returns: &BTreeMap<String, BlueprintReturn>,
+        constants: &BTreeMap<String, YamlSolValue>,
     ) -> BlueprintResult<BlueprintReservedSlot> {
         let caps = self.template_regex.captures(template_str).ok_or_else(|| {
             // Should not happen due to is_match check before calling

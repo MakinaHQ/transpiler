@@ -33,6 +33,7 @@ governor = "0.10.1"
 
 # tracing and errors
 thiserror = "2"
+miette = { version = "7.1.0", features = ["fancy"] }
 eyre = "0.6.12"
 color-eyre = "0.6"
 tracing = "0.1.41"
