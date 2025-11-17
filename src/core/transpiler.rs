@@ -16,7 +16,7 @@ use crate::{
     core::parser::{
         blueprint::{
             BlueprintAction, BlueprintCall, BlueprintInputSlot, BlueprintParameter,
-            BlueprintReservedSlot, BlueprintTarget, MarkedBlueprintParser,
+            BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
         },
         positions::types::{Instruction, InstructionDefinition, Position},
     },
@@ -72,8 +72,8 @@ fn transpile(
 ) -> miette::Result<(String, String, String, MakinaInstruction)> {
     // get the blueprint of the instruction
     // we exit early and print the error to get nice diagnostics
-    // this can be removed onec the general parser also returns miette::Report
-    let blueprint = match MarkedBlueprintParser::new(&inst.definition.blueprint_path).parse() {
+    // this can be removed once the general parser also returns miette::Report
+    let blueprint = match BlueprintParser::new(&inst.definition.blueprint_path)?.parse() {
         Ok(blueprint) => blueprint,
         Err(err) => {
             eprintln!("{:?}", err);
@@ -206,7 +206,7 @@ fn transpile_parameter(
     checked_slots: &mut Vec<Bytes>,
 ) -> Value {
     match parameter {
-        BlueprintParameter::Input { name } => {
+        BlueprintParameter::Input(name) => {
             let (_, input) = definition
                 .inputs
                 .iter()

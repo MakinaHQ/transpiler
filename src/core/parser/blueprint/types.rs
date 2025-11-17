@@ -24,17 +24,43 @@ pub enum BlueprintReservedSlot {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlueprintParameter {
     Return(String),                        // Reference to a previous call's return value.
+    Input(String),                         // Reference to an input.
     InputSlot(String),                     // Reference to an input slot.
     Scalar(BlueprintValue),                // A scalar value.
     Tuple(Vec<BlueprintParameter>),        // A tuple of parameters.
     DynamicArray(Vec<BlueprintParameter>), // A dynamic array.
     FixedArray(Vec<BlueprintParameter>, usize), // A fixed-size array.
+}
 
-    Input { name: String }, // Reference to an input.
+impl From<DynSolValue> for BlueprintParameter {
+    fn from(sol: DynSolValue) -> Self {
+        if let Some(inner) = sol.as_tuple() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            return BlueprintParameter::Tuple(parsed);
+        }
+
+        if let Some(inner) = sol.as_fixed_array() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            let size = inner.len();
+            return BlueprintParameter::FixedArray(parsed, size);
+        }
+
+        if let Some(inner) = sol.as_array() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            return BlueprintParameter::DynamicArray(parsed);
+        }
+
+        let r#type = sol.as_type().expect("type must be known here");
+        BlueprintParameter::Scalar(BlueprintValue {
+            value: sol,
+            r#type,
+            description: None,
+        })
+    }
 }
 
 impl BlueprintParameter {
-    /// Recursively collect all input slot names used in the BlueprintParameter.
+    /// Recursively collect all input slot names used in the [BlueprintParameter].
     pub fn input_slots(&self) -> Vec<String> {
         match self {
             BlueprintParameter::InputSlot(name) => vec![name.clone()],
@@ -50,12 +76,14 @@ impl BlueprintParameter {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintInput {
+    pub name: String,
     pub r#type: DynSolType,
     pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintInputSlot {
+    pub name: String,
     pub r#type: DynSolType,
     pub description: Option<String>,
     pub meta_type: Option<MetaDynSolType>,
@@ -99,6 +127,41 @@ pub struct BlueprintCall {
     pub selector: Selector,
     pub parameters: Vec<BlueprintParameter>,
     pub r#return: Option<BlueprintReturn>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlueprintTemplate {
+    Input(BlueprintInput),
+    InputSlot(BlueprintInputSlot),
+    Constant(YamlSolValue),
+    Return(BlueprintReturn),
+    Raw(YamlSolValue),
+}
+
+impl BlueprintTemplate {
+    pub fn as_constant(&self) -> Option<&YamlSolValue> {
+        match self {
+            Self::Constant(cons) => Some(cons),
+            _ => None,
+        }
+    }
+
+    pub fn as_input(&self) -> Option<&BlueprintInput> {
+        match self {
+            Self::Input(input) => Some(input),
+            _ => None,
+        }
+    }
+
+    pub fn as_type(&self) -> &DynSolType {
+        match self {
+            Self::Input(input) => &input.r#type,
+            Self::InputSlot(slot) => &slot.r#type,
+            Self::Constant(cons) => &cons.r#type,
+            Self::Return(ret) => &ret.r#type,
+            Self::Raw(raw) => &raw.r#type,
+        }
+    }
 }
 
 #[cfg(test)]
