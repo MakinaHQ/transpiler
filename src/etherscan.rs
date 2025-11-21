@@ -29,9 +29,9 @@ pub struct Etherscan {
 impl Etherscan {
     pub fn new(chain: U256) -> Self {
         let client = reqwest::Client::new();
-        // FIXME: this should be higher, docs say 5 / second
+        // docs say 3 / second but anything > 1 gets limited
         let governor =
-            RateLimiter::direct(Quota::per_second(NonZero::new(2).expect("we know 2 != 0")));
+            RateLimiter::direct(Quota::per_second(NonZero::new(1).expect("we know 1 != 0")));
 
         let api_key = env::var("ETHERSCAN_API_KEY").expect("ETHERSCAN_API_KEY must be set");
 
