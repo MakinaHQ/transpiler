@@ -172,7 +172,8 @@ impl Check {
 
         paths
             .iter()
-            .filter_map(|p| BlueprintParser::new().parse_from_file(p).ok())
+            .filter_map(|path| BlueprintParser::new(path).ok())
+            .filter_map(|parser| parser.parse().ok())
             .collect()
     }
 

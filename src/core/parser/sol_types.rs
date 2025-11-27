@@ -1,4 +1,4 @@
-use saphyr::Yaml;
+use saphyr::{MarkedYaml, Yaml, YamlData};
 
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
@@ -37,7 +37,7 @@ pub enum SolTypeError {
 
 pub type SolTypeResult<T> = Result<T, SolTypeError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct YamlSolValue {
     pub r#type: DynSolType,
     pub value: DynSolValue,
@@ -199,5 +199,30 @@ pub fn parse_sol_value(
         _ => Err(SolTypeError::InvalidSolValue(format!(
             "Unsupported type: {sol_type}"
         ))),
+    }
+}
+
+pub fn parse_sol_value_marked<'a>(
+    sol_type: &DynSolType,
+    field: &'a MarkedYaml<'a>,
+) -> Option<DynSolValue> {
+    parse_sol_value(sol_type, &unmark(field.clone()), "").ok()
+}
+
+fn unmark<'a>(input: MarkedYaml<'a>) -> Yaml<'a> {
+    match input.data {
+        YamlData::Value(value) => Yaml::Value(value),
+        YamlData::Representation(str, style, tag) => Yaml::Representation(str, style, tag),
+        YamlData::Mapping(mapping) => Yaml::Mapping(
+            mapping
+                .into_iter()
+                .map(|(k, v)| (unmark(k), unmark(v)))
+                .collect(),
+        ),
+        YamlData::Sequence(sequence) => {
+            Yaml::Sequence(sequence.into_iter().map(|e| unmark(e)).collect())
+        }
+        YamlData::BadValue => Yaml::BadValue,
+        YamlData::Alias(alias) => Yaml::Alias(alias),
     }
 }

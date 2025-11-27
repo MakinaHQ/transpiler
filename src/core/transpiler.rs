@@ -1,5 +1,5 @@
-use eyre::eyre;
 use indexmap::IndexMap;
+use miette::miette;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -23,7 +23,7 @@ use crate::{
     types::{MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile, RootfileInputSlot},
 };
 
-pub fn get_rootfile_from_positions(positions: Vec<Position>) -> eyre::Result<Rootfile> {
+pub fn get_rootfile_from_positions(positions: Vec<Position>) -> miette::Result<Rootfile> {
     let mut instructions = Vec::new();
 
     for position in positions {
@@ -35,7 +35,7 @@ pub fn get_rootfile_from_positions(positions: Vec<Position>) -> eyre::Result<Roo
 
 pub fn create_rootfile_instructions(
     position: Position,
-) -> eyre::Result<Vec<NamedMakinaInstruction>> {
+) -> miette::Result<Vec<NamedMakinaInstruction>> {
     let mut instructions = Vec::new();
 
     for inst in &position.instructions {
@@ -56,7 +56,7 @@ pub fn create_rootfile_instructions(
     // Check for invalid tags that don't match any position
     for (action, tag) in position.global_tags {
         if !instructions.iter().any(|i| i.instruction_name == action) {
-            return Err(eyre!(
+            return Err(miette!(
                 "invalid tag \"{tag}:{action}\", no action with name \"{action}\" exists"
             ));
         }
@@ -69,9 +69,17 @@ fn transpile(
     inst: &Instruction,
     id: U256,
     group_id: U256,
-) -> eyre::Result<(String, String, String, MakinaInstruction)> {
+) -> miette::Result<(String, String, String, MakinaInstruction)> {
     // get the blueprint of the instruction
-    let blueprint = BlueprintParser::new().parse_from_file(&inst.definition.blueprint_path)?;
+    // we exit early and print the error to get nice diagnostics
+    // this can be removed once the general parser also returns miette::Report
+    let blueprint = match BlueprintParser::new(&inst.definition.blueprint_path)?.parse() {
+        Ok(blueprint) => blueprint,
+        Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(miette!("aborting"));
+        }
+    };
 
     let (_name, action) = blueprint
         .actions
@@ -118,7 +126,9 @@ fn transpile(
 
     let reserved_slots = transpile_reserved_slots(action, &return_values, &mut checked_slots);
     let inputs_slots = transpile_input_slots(action);
-    let (commands, state) = planner.plan(reserved_slots)?;
+    let (commands, state) = planner
+        .plan(reserved_slots)
+        .map_err(|err| miette!("{}", err))?;
     let bitmap = generate_bitmap(&state, &checked_slots);
 
     let protocol = blueprint.protocol.clone();
@@ -196,7 +206,7 @@ fn transpile_parameter(
     checked_slots: &mut Vec<Bytes>,
 ) -> Value {
     match parameter {
-        BlueprintParameter::Input { name } => {
+        BlueprintParameter::Input(name) => {
             let (_, input) = definition
                 .inputs
                 .iter()

@@ -8,33 +8,59 @@ use alloy::{
 
 use crate::{core::parser::sol_types::YamlSolValue, meta_sol_types::MetaDynSolType};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintValue {
     pub value: DynSolValue,
     pub r#type: DynSolType,
     pub description: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlueprintReservedSlot {
     Return(String),         // Reference to a previous call's return value.
     Scalar(BlueprintValue), // A scalar value.
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlueprintParameter {
     Return(String),                        // Reference to a previous call's return value.
+    Input(String),                         // Reference to an input.
     InputSlot(String),                     // Reference to an input slot.
     Scalar(BlueprintValue),                // A scalar value.
     Tuple(Vec<BlueprintParameter>),        // A tuple of parameters.
     DynamicArray(Vec<BlueprintParameter>), // A dynamic array.
     FixedArray(Vec<BlueprintParameter>, usize), // A fixed-size array.
+}
 
-    Input { name: String }, // Reference to an input.
+impl From<DynSolValue> for BlueprintParameter {
+    fn from(sol: DynSolValue) -> Self {
+        if let Some(inner) = sol.as_tuple() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            return BlueprintParameter::Tuple(parsed);
+        }
+
+        if let Some(inner) = sol.as_fixed_array() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            let size = inner.len();
+            return BlueprintParameter::FixedArray(parsed, size);
+        }
+
+        if let Some(inner) = sol.as_array() {
+            let parsed: Vec<BlueprintParameter> = inner.iter().cloned().map(Into::into).collect();
+            return BlueprintParameter::DynamicArray(parsed);
+        }
+
+        let r#type = sol.as_type().expect("type must be known here");
+        BlueprintParameter::Scalar(BlueprintValue {
+            value: sol,
+            r#type,
+            description: None,
+        })
+    }
 }
 
 impl BlueprintParameter {
-    /// Recursively collect all input slot names used in the BlueprintParameter.
+    /// Recursively collect all input slot names used in the [BlueprintParameter].
     pub fn input_slots(&self) -> Vec<String> {
         match self {
             BlueprintParameter::InputSlot(name) => vec![name.clone()],
@@ -48,14 +74,16 @@ impl BlueprintParameter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintInput {
+    pub name: String,
     pub r#type: DynSolType,
     pub description: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintInputSlot {
+    pub name: String,
     pub r#type: DynSolType,
     pub description: Option<String>,
     pub meta_type: Option<MetaDynSolType>,
@@ -63,13 +91,13 @@ pub struct BlueprintInputSlot {
     pub meta_type_name: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintReturn {
     pub name: String,
     pub r#type: DynSolType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Blueprint {
     pub path: PathBuf,
     pub protocol: String,
@@ -78,7 +106,7 @@ pub struct Blueprint {
     pub actions: HashMap<String, BlueprintAction>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintAction {
     pub calls: Vec<BlueprintCall>,
     pub returns_mapping: HashMap<String, usize>,
@@ -86,19 +114,54 @@ pub struct BlueprintAction {
     pub input_slots: IndexMap<String, BlueprintInputSlot>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlueprintTarget {
     Input(String),
     Address(Address),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlueprintCall {
     pub description: String,
     pub target: BlueprintTarget,
     pub selector: Selector,
     pub parameters: Vec<BlueprintParameter>,
     pub r#return: Option<BlueprintReturn>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlueprintTemplate {
+    Input(BlueprintInput),
+    InputSlot(BlueprintInputSlot),
+    Constant(YamlSolValue),
+    Return(BlueprintReturn),
+    Raw(YamlSolValue),
+}
+
+impl BlueprintTemplate {
+    pub fn as_constant(&self) -> Option<&YamlSolValue> {
+        match self {
+            Self::Constant(cons) => Some(cons),
+            _ => None,
+        }
+    }
+
+    pub fn as_input(&self) -> Option<&BlueprintInput> {
+        match self {
+            Self::Input(input) => Some(input),
+            _ => None,
+        }
+    }
+
+    pub fn as_type(&self) -> &DynSolType {
+        match self {
+            Self::Input(input) => &input.r#type,
+            Self::InputSlot(slot) => &slot.r#type,
+            Self::Constant(cons) => &cons.r#type,
+            Self::Return(ret) => &ret.r#type,
+            Self::Raw(raw) => &raw.r#type,
+        }
+    }
 }
 
 #[cfg(test)]
