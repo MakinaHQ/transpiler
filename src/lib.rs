@@ -3,6 +3,7 @@ pub mod cli;
 pub mod core;
 pub mod errors;
 pub mod etherscan;
+pub mod merkletree;
 pub mod meta_sol_types;
 pub mod types;
 
@@ -71,7 +72,14 @@ fn write_rootfile(content: &Rootfile, out: &PathBuf) -> Result<()> {
         None => text,
     };
 
-    std::fs::write(out, formatted)?;
+    std::fs::write(
+        out,
+        format!(
+            "# this is a generated file - do not edit manually\n# root: {}\n\n{}",
+            content.root(),
+            formatted
+        ),
+    )?;
 
     println!("✅ Rootfile successfully transpiled to: {}", out.display());
 
