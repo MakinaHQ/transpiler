@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/MakinaHQ/transpiler"
 homepage = "https://operators.makina.finance/"
-description = "transpiles Makina instructions into executable weiroll scripts"
+description = "A compiler that takes machine instructions defined in a YAML-based DSL and transpiles them into rootfiles for machines. The compiled configuration is stored in the [MakinaHQ/makina-integrations](https://github.com/MakinaHQ/makina-integrations) repository. Generated commands and states are based on [weiroll](https://github.com/EnsoBuild/enso-weiroll)."
 authors = ["security@makina.finance"]
 dist = true
 
