@@ -1,6 +1,6 @@
 # Transpiler
 
-A compiler that takes machine instructions defined in a YAML-based DSL and transpiles them into rootfiles for machines. The compiled configuration is stored in the [MakinaHQ/config](https://github.com/MakinaHQ/config) repository. Generated commands and states are based on [weiroll](https://github.com/EnsoBuild/enso-weiroll).
+A compiler that takes machine instructions defined in a YAML-based DSL and transpiles them into rootfiles for machines. The compiled configuration is stored in the [MakinaHQ/makina-integrations](https://github.com/MakinaHQ/makina-integrations) repository. Generated commands and states are based on [weiroll](https://github.com/EnsoBuild/enso-weiroll).
 
 ## Architecture
 
