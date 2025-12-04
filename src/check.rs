@@ -7,7 +7,7 @@ use eyre::eyre;
 use crate::{
     core::parser::{
         blueprint::{Blueprint, BlueprintParser},
-        positions::types::Root,
+        positions::types::{InstructionTemplateEnum, Root},
     },
     etherscan::Etherscan,
 };
@@ -29,7 +29,18 @@ struct AddressInfo {
 impl Check {
     pub fn new(root_path: PathBuf, root: Root, github_errors: bool) -> Self {
         let chain = if let Some(val) = root.config.get("chain_id") {
-            let (id, _) = val.value.as_uint().expect("chain_id must be uint");
+            let id: U256 = match &val.template {
+                InstructionTemplateEnum::Config(yaml_sol_val) => {
+                    yaml_sol_val
+                        .value
+                        .as_uint()
+                        .expect("chain_id must be a uint")
+                        .0
+                }
+                _ => {
+                    panic!("chain_id must be a config value");
+                }
+            };
             tracing::info!("read chain_id: {id} from input file config");
             id
         } else {
@@ -130,15 +141,15 @@ impl Check {
         let mut result = Vec::new();
 
         for (k, v) in self.root.config.iter() {
-            let Some(address) = v.value.as_address() else {
-                continue;
-            };
-
-            result.push(AddressInfo {
-                address,
-                label: format!("config ({k})"),
-                path: self.root_path.clone(),
-            });
+            if let InstructionTemplateEnum::Config(ref yaml_sol_val) = v.template
+                && let Some(address) = yaml_sol_val.value.as_address() {
+                    result.push(AddressInfo {
+                        address,
+                        label: format!("config ({k})"),
+                        path: self.root_path.clone(),
+                    });
+                    continue;
+                }
         }
 
         result

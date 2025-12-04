@@ -29,4 +29,9 @@ pub struct Cli {
     #[arg(long)]
     #[clap(default_value_t = false)]
     pub github_errors: bool,
+
+    /// Path to the json token list.
+    /// Required if instructions refer to `token_list`.
+    #[arg(short, long)]
+    pub token_list: Option<PathBuf>,
 }

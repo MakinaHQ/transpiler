@@ -1,15 +1,19 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
     primitives::{Address, U256},
 };
 
-use crate::types::InstructionType;
+use crate::{core::parser::sol_types::YamlSolValue, token_list::TokenInfo, types::InstructionType};
 
 #[derive(Debug)]
 pub struct Root {
-    pub config: HashMap<String, SolValue>,
+    pub tokens: BTreeMap<String, TokenInfo>,
+    pub config: BTreeMap<String, InstructionTemplate>,
     pub positions: Vec<Position>,
 }
 
@@ -58,4 +62,41 @@ pub struct InstructionDefinition {
     pub label: String,
     pub override_name: Option<String>,
     pub inputs: HashMap<String, SolValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstructionTemplateEnum {
+    Config(YamlSolValue),
+    Raw(YamlSolValue),
+    TokenInfo(TokenInfo),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstructionTemplate {
+    pub template: InstructionTemplateEnum,
+    pub is_used: bool,
+}
+
+impl InstructionTemplate {
+    pub fn new(template: InstructionTemplateEnum) -> Self {
+        Self {
+            template,
+            is_used: false,
+        }
+    }
+
+    pub fn as_token(&self) -> Option<&TokenInfo> {
+        match &self.template {
+            InstructionTemplateEnum::TokenInfo(token) => Some(token),
+            _ => None,
+        }
+    }
+
+    pub fn as_type(&self) -> &DynSolType {
+        match &self.template {
+            InstructionTemplateEnum::Raw(raw) => &raw.r#type,
+            InstructionTemplateEnum::Config(config) => &config.r#type,
+            InstructionTemplateEnum::TokenInfo(_) => &DynSolType::Address,
+        }
+    }
 }

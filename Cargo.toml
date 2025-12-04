@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 # ethereum
 alloy = { version = "1.0.42", features = ["full"] }
+alloy-chains = { version = "0.2.20", features = ["serde"] }
 
 # tokio
 tokio = { version = "1.44.2", features = ["full"] }
@@ -24,6 +25,7 @@ saphyr-parser = "0.0.4"
 #serde
 serde = { version = "1.0.219", features = ["derive"] }
 serde_repr = "0.1.20"
+serde_json = "1.0.145"
 
 # toml
 toml = "0.8.20"
@@ -49,3 +51,4 @@ dprint-plugin-toml = "0.7.0"
 itertools = "0.14.0"
 regex = "1.11.1"
 indexmap = "2.11.0"
+dotenv = "0.15.0"

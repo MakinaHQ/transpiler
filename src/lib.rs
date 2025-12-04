@@ -4,6 +4,7 @@ pub mod core;
 pub mod errors;
 pub mod etherscan;
 pub mod meta_sol_types;
+pub mod token_list;
 pub mod types;
 
 use core::parser::positions::parser::PositionParser;
@@ -28,7 +29,17 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .map_err(|err| miette!("{}", err));
     }
 
-    let parsed = PositionParser::new(cli.input_file.clone())
+    // verify the token list path exists, if provided
+    if let Some(token_list_path) = &cli.token_list
+        && !token_list_path.is_file() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("token list file {} not found", token_list_path.display()),
+            )))
+            .map_err(|err| miette!("{}", err));
+        }
+
+    let parsed = PositionParser::new(cli.input_file.clone(), cli.token_list.clone())?
         .parse()
         .map_err(|err| miette!("{}", err))?;
 
@@ -40,8 +51,8 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
             .map_err(|err| miette!("{}", err));
     }
 
-    let rootfile =
-        get_rootfile_from_positions(parsed.positions).map_err(|err| miette!("{}", err))?;
+    let rootfile = get_rootfile_from_positions(parsed.positions, parsed.tokens)
+        .map_err(|err| miette!("{}", err))?;
 
     write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))?;
 

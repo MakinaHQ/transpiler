@@ -3,6 +3,7 @@ use transpiler::cli;
 
 #[tokio::main]
 async fn main() -> miette::Result<()> {
+    let _ = dotenv::dotenv();
     let cli = cli::Cli::parse();
     transpiler::run(&cli).await
 }

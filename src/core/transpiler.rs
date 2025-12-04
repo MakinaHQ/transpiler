@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use miette::miette;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
@@ -20,17 +20,24 @@ use crate::{
         },
         positions::types::{Instruction, InstructionDefinition, Position},
     },
+    token_list::TokenInfo,
     types::{MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile, RootfileInputSlot},
 };
 
-pub fn get_rootfile_from_positions(positions: Vec<Position>) -> miette::Result<Rootfile> {
+/// Transpile positions into a makina rootfile. Include tokens used in the transpilation.
+/// Returns a [Rootfile] on success.
+pub fn get_rootfile_from_positions(
+    positions: Vec<Position>,
+    tokens_used: BTreeMap<String, TokenInfo>,
+) -> miette::Result<Rootfile> {
     let mut instructions = Vec::new();
 
     for position in positions {
         instructions.extend(create_rootfile_instructions(position)?);
     }
 
-    Ok(instructions.into())
+    let rootfile: Rootfile = instructions.into();
+    Ok(rootfile.with_tokens(tokens_used))
 }
 
 pub fn create_rootfile_instructions(
@@ -76,7 +83,7 @@ fn transpile(
     let blueprint = match BlueprintParser::new(&inst.definition.blueprint_path)?.parse() {
         Ok(blueprint) => blueprint,
         Err(err) => {
-            eprintln!("{:?}", err);
+            eprintln!("{err:?}");
             return Err(miette!("aborting"));
         }
     };
