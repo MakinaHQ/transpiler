@@ -142,15 +142,14 @@ impl Check {
 
         for (k, v) in self.root.config.iter() {
             if let InstructionTemplateEnum::Config(ref yaml_sol_val) = v.template
-                && let Some(address) = yaml_sol_val.value.as_address()
-            {
-                result.push(AddressInfo {
-                    address,
-                    label: format!("config ({k})"),
-                    path: self.root_path.clone(),
-                });
-                continue;
-            }
+                && let Some(address) = yaml_sol_val.value.as_address() {
+                    result.push(AddressInfo {
+                        address,
+                        label: format!("config ({k})"),
+                        path: self.root_path.clone(),
+                    });
+                    continue;
+                }
         }
 
         result

@@ -35,6 +35,12 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     #[clap(default_value = "caliber.yaml")]
     pub input_file: PathBuf,
+    
+    /// Render errors as github workflow commands.
+    /// Currently only implemented for checks.
+    #[arg(long)]
+    #[clap(default_value_t = false)]
+    pub github_errors: bool,
 
     /// Path to the json token list.
     /// Required if instructions refer to `token_list`.
