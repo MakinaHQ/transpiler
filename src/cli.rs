@@ -4,10 +4,17 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+const DEFAULT_OUT: &str = "rootfile.toml";
+
 #[derive(clap::Subcommand, Debug, Clone, PartialEq)]
 pub enum Command {
     /// Transpile input file into a makina rootfile
-    Transpile,
+    Transpile {
+        /// Path where the rootfile will be written.
+        #[arg(short, long)]
+        #[clap(default_value = DEFAULT_OUT)]
+        output_file: PathBuf,
+    },
     /// Check the input file for usage of unverified contracts
     Check {
         /// Render errors as github workflow commands.
@@ -50,6 +57,8 @@ pub struct Cli {
 
 impl Cli {
     pub fn command(&self) -> Command {
-        self.command.clone().unwrap_or(Command::Transpile)
+        self.command.clone().unwrap_or(Command::Transpile {
+            output_file: PathBuf::from(DEFAULT_OUT),
+        })
     }
 }

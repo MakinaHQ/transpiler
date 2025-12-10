@@ -51,6 +51,7 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
     match cli.command() {
         Command::Transpile => {
             write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
+
         }
         Command::Check { github_errors } => {
             let check = Check::new(cli.input_file.clone(), parsed, github_errors);
