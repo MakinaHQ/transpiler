@@ -23,7 +23,7 @@ use crate::{
     types::{MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile, RootfileInputSlot},
 };
 
-pub fn get_rootfile_from_positions(positions: Vec<Position>) -> miette::Result<Rootfile> {
+pub fn get_rootfile_from_positions(positions: &[Position]) -> miette::Result<Rootfile> {
     let mut instructions = Vec::new();
 
     for position in positions {
@@ -34,7 +34,7 @@ pub fn get_rootfile_from_positions(positions: Vec<Position>) -> miette::Result<R
 }
 
 pub fn create_rootfile_instructions(
-    position: Position,
+    position: &Position,
 ) -> miette::Result<Vec<NamedMakinaInstruction>> {
     let mut instructions = Vec::new();
 
@@ -54,8 +54,8 @@ pub fn create_rootfile_instructions(
     }
 
     // Check for invalid tags that don't match any position
-    for (action, tag) in position.global_tags {
-        if !instructions.iter().any(|i| i.instruction_name == action) {
+    for (action, tag) in &position.global_tags {
+        if !instructions.iter().any(|i| &i.instruction_name == action) {
             return Err(miette!(
                 "invalid tag \"{tag}:{action}\", no action with name \"{action}\" exists"
             ));
@@ -630,7 +630,7 @@ mod test {
             global_tags: vec![("deposit".to_string(), "test_tag".to_string())],
         };
 
-        let transpiled = create_rootfile_instructions(pos).unwrap();
+        let transpiled = create_rootfile_instructions(&pos).unwrap();
         assert_eq!(transpiled.len(), 1);
 
         let makina_inst = transpiled.first().unwrap();
@@ -680,7 +680,7 @@ mod test {
             global_tags: vec![("unknown".to_string(), "test_tag".to_string())],
         };
 
-        let err = create_rootfile_instructions(pos).unwrap_err().to_string();
+        let err = create_rootfile_instructions(&pos).unwrap_err().to_string();
         err.find("no action with name").unwrap();
     }
 }
