@@ -11,6 +11,8 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::token_list::TokenInfo;
 
+use crate::merkletree::MerkleTree;
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum InputSlotType {
     Uint,
@@ -234,5 +236,20 @@ impl Rootfile {
             .filter(|&i| i.protocol_name == protocol)
             .cloned()
             .collect()
+    }
+
+    /// returns the merkletree built from this rootfile
+    pub fn merkletree(&self) -> MerkleTree {
+        let leafs = self
+            .all_instructions()
+            .iter()
+            .map(|i| i.inner.hash())
+            .collect();
+        MerkleTree::new(leafs)
+    }
+
+    /// returns root of this files merkletree
+    pub fn root(&self) -> FixedBytes<32> {
+        *self.merkletree().get_root()
     }
 }
