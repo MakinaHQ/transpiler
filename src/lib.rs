@@ -37,8 +37,8 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         get_rootfile_from_positions(&parsed.positions).map_err(|err| miette!("{}", err))?;
 
     match cli.command() {
-        Command::Transpile { output_file } => {
-            write_rootfile(&rootfile, &output_file).map_err(|err| miette!("{}", err))
+        Command::Transpile => {
+            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
         }
         Command::Check { github_errors } => {
             let check = Check::new(cli.input_file.clone(), parsed, github_errors);
