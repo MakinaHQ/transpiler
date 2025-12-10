@@ -2,7 +2,17 @@
 name = "transpiler"
 version = "0.1.0"
 edition = "2024"
-publish = false
+repository = "https://github.com/MakinaHQ/transpiler"
+homepage = "https://operators.makina.finance/"
+description = "transpiles Makina instructions into executable weiroll scripts"
+authors = ["security@makina.finance"]
+dist = true
+
+[package.metadata.wix]
+upgrade-guid = "77ADBBB1-8157-48AD-9F43-A6879C80B977"
+path-guid = "D8B6B6F0-9D23-4084-8FA2-23095FF8C89F"
+license = false
+eula = false
 
 [dependencies]
 # ethereum
@@ -52,3 +62,8 @@ itertools = "0.14.0"
 regex = "1.11.1"
 indexmap = "2.11.0"
 dotenv = "0.15.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
