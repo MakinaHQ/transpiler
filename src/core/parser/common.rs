@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::core::parser::sol_types::{YamlSolValue, parse_sol_type_str, parse_sol_value_marked};
 
 /// General error struct returned from Parser
-/// Contains a labled source location and an optional type definition
+/// Contains a labeled source location and an optional type definition
 #[derive(Debug, Error, Diagnostic)]
 #[error("Parser Error")]
 pub struct ParserError {
