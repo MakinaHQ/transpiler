@@ -4,17 +4,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-const DEFAULT_OUT: &str = "rootfile.toml";
-
 #[derive(clap::Subcommand, Debug, Clone, PartialEq)]
 pub enum Command {
     /// Transpile input file into a makina rootfile
-    Transpile {
-        /// Path where the rootfile will be written.
-        #[arg(short, long)]
-        #[clap(default_value = DEFAULT_OUT)]
-        output_file: PathBuf,
-    },
+    Transpile,
     /// Check the input file for usage of unverified contracts
     Check {
         /// Render errors as github workflow commands.
@@ -33,6 +26,11 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Path where the rootfile will be written.
+    #[arg(short, long)]
+    #[clap(default_value = "rootfile.toml")]
+    pub output_file: PathBuf,
+
     /// Path to the top level caliber file to transpile.
     #[arg(short, long, global = true)]
     #[clap(default_value = "caliber.yaml")]
@@ -46,8 +44,6 @@ pub struct Cli {
 
 impl Cli {
     pub fn command(&self) -> Command {
-        self.command.clone().unwrap_or(Command::Transpile {
-            output_file: PathBuf::from(DEFAULT_OUT),
-        })
+        self.command.clone().unwrap_or(Command::Transpile)
     }
 }
