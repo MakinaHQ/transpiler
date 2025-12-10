@@ -277,6 +277,47 @@ impl PositionParser {
         Ok(tokens)
     }
 
+    fn instruction_position_tokens<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<Vec<Address>> {
+        let Some(position_tokens) = instruction.data.as_mapping_get("position_tokens") else {
+            return Ok(Vec::new());
+        };
+
+        let tokens_seq = position_tokens
+            .data
+            .as_sequence()
+            .ok_or(self.error(position_tokens.span, "position_tokens must be a sequence"))?;
+
+        let mut tokens = Vec::new();
+        for token in tokens_seq {
+            let parsed = self.parse_template(token, templates, true)?;
+
+            if parsed.as_type() != &DynSolType::Address {
+                return Err(self.error(
+                    token.span,
+                    "position_token template must resolve to an Address",
+                ))?;
+            }
+
+            let position_token = match parsed.template {
+                InstructionTemplateEnum::Config(ref config) => {
+                    config.value.as_address().expect("already checked the type")
+                }
+                InstructionTemplateEnum::Raw(ref raw) => {
+                    raw.value.as_address().expect("already checked the type")
+                }
+                InstructionTemplateEnum::TokenInfo(ref token_info) => token_info.address,
+            };
+
+            tokens.push(position_token);
+        }
+
+        Ok(tokens)
+    }
+
     fn instruction_definition_path_and_name<'a>(
         &self,
         instruction: &'a MarkedYaml<'a>,
@@ -419,6 +460,7 @@ impl PositionParser {
         let is_debt = self.instruction_is_debt(instruction)?;
         let instruction_type = self.instruction_type(instruction)?;
         let affected_tokens = self.instruction_affected_tokens(instruction, templates)?;
+        let position_tokens = self.instruction_position_tokens(instruction, templates)?;
         let instruction_definition = self.instruction_definition(instruction, templates)?;
 
         Ok(Instruction {
@@ -426,6 +468,7 @@ impl PositionParser {
             is_debt,
             instruction_type,
             affected_tokens,
+            position_tokens,
             definition: instruction_definition,
         })
     }

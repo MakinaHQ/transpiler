@@ -51,6 +51,7 @@ pub struct Instruction {
     pub is_debt: bool,
     pub instruction_type: InstructionType,
     pub affected_tokens: Vec<Address>,
+    pub position_tokens: Vec<Address>,
     pub definition: InstructionDefinition,
 }
 

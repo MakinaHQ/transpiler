@@ -154,6 +154,7 @@ fn transpile(
         group_id,
         instruction_type: inst.instruction_type,
         affected_tokens: inst.affected_tokens.clone(),
+        position_tokens: inst.position_tokens.clone(),
         commands: commands.iter().map(|c| FixedBytes::from_slice(c)).collect(),
         state,
         bitmap,
@@ -462,10 +463,12 @@ mod test {
         inputs.insert("token".into(), token);
 
         let affected_tokens = vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")];
+        let position_tokens = vec![address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8")];
         let inst = Instruction {
             description: None,
             is_debt: false,
             affected_tokens: affected_tokens.clone(),
+            position_tokens: position_tokens.clone(),
             instruction_type: InstructionType::Management,
             definition: InstructionDefinition {
                 blueprint_path: "test_data/blueprints/deposit.yaml".parse().unwrap(),
@@ -486,6 +489,7 @@ mod test {
 
         assert_eq!(m.position_id, id);
         assert_eq!(m.affected_tokens, affected_tokens);
+        assert_eq!(m.position_tokens, position_tokens);
 
         assert_eq!(m.commands.len(), 2);
         //    sel      f  inputs              o  target
@@ -529,6 +533,7 @@ mod test {
     #[test]
     fn test_aave_account_weth() {
         let affected_tokens = vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")];
+        let position_tokens = vec![address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8")];
         let mut inputs = HashMap::new();
         let aave_token = SolValue {
             r#type: DynSolType::Address,
@@ -548,6 +553,7 @@ mod test {
             is_debt: false,
             instruction_type: InstructionType::Accounting,
             affected_tokens: affected_tokens.clone(),
+            position_tokens: position_tokens.clone(),
             definition: InstructionDefinition {
                 inputs,
                 label: "weth".into(),
@@ -568,6 +574,7 @@ mod test {
         assert_eq!(m.position_id, id);
         assert!(!m.is_debt);
         assert!(matches!(m.instruction_type, InstructionType::Accounting));
+        assert_eq!(m.position_tokens, position_tokens);
 
         assert_eq!(m.commands.len(), 1);
         //    sel      f  inputs              o  target
@@ -615,10 +622,12 @@ mod test {
         inputs.insert("token".into(), token);
 
         let affected_tokens = vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")];
+        let position_tokens = vec![address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8")];
         let inst = Instruction {
             description: None,
             is_debt: false,
             affected_tokens: affected_tokens.clone(),
+            position_tokens: position_tokens.clone(),
             instruction_type: InstructionType::Management,
             definition: InstructionDefinition {
                 blueprint_path: "test_data/blueprints/deposit.yaml".parse().unwrap(),
@@ -665,10 +674,12 @@ mod test {
         inputs.insert("token".into(), token);
 
         let affected_tokens = vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")];
+        let position_tokens = vec![address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8")];
         let inst = Instruction {
             description: None,
             is_debt: false,
             affected_tokens: affected_tokens.clone(),
+            position_tokens: position_tokens.clone(),
             instruction_type: InstructionType::Management,
             definition: InstructionDefinition {
                 blueprint_path: "test_data/blueprints/deposit.yaml".parse().unwrap(),

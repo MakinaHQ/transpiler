@@ -108,6 +108,7 @@ pub struct MakinaInstruction {
     pub group_id: U256,
     pub instruction_type: InstructionType,
     pub affected_tokens: Vec<Address>,
+    pub position_tokens: Vec<Address>,
     pub commands: Vec<FixedBytes<32>>,
     pub state: Vec<Bytes>,
     #[serde(with = "alloy::serde::displayfromstr")]
@@ -148,6 +149,10 @@ impl MakinaInstruction {
         keccak256(self.affected_tokens.abi_encode_packed())
     }
 
+    pub fn position_tokens_hash(&self) -> FixedBytes<32> {
+        keccak256(self.position_tokens.abi_encode_packed())
+    }
+
     pub fn hash(&self) -> FixedBytes<32> {
         let preimage = (
             self.commands_hash(),
@@ -157,6 +162,7 @@ impl MakinaInstruction {
             self.is_debt,
             self.group_id,
             self.affected_tokens_hash(),
+            self.position_tokens_hash(),
             U256::from(self.instruction_type as u8),
         );
 
