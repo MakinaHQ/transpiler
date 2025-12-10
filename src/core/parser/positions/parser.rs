@@ -41,7 +41,8 @@ impl PositionParser {
     /// Create a new position parser.
     pub fn new(root_path: PathBuf, token_list_path: Option<PathBuf>) -> miette::Result<Self> {
         let token_list = if let Some(path) = token_list_path {
-            TokenList::new(path.clone()).map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
+            TokenList::new(path.clone())
+                .map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
         } else {
             TokenList::default()
         };

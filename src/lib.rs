@@ -31,13 +31,14 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
 
     // verify the token list path exists, if provided
     if let Some(token_list_path) = &cli.token_list
-        && !token_list_path.is_file() {
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("token list file {} not found", token_list_path.display()),
-            )))
-            .map_err(|err| miette!("{}", err));
-        }
+        && !token_list_path.is_file()
+    {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("token list file {} not found", token_list_path.display()),
+        )))
+        .map_err(|err| miette!("{}", err));
+    }
 
     let parsed = PositionParser::new(cli.input_file.clone(), cli.token_list.clone())?
         .parse()
