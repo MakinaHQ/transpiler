@@ -41,7 +41,7 @@ impl PositionParser {
     /// Create a new position parser.
     pub fn new(root_path: PathBuf, token_list_path: Option<PathBuf>) -> miette::Result<Self> {
         let token_list = if let Some(path) = token_list_path {
-            TokenList::new(path).map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
+            TokenList::new(path.clone()).map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
         } else {
             TokenList::default()
         };
@@ -80,10 +80,10 @@ impl PositionParser {
     /// Parse positions from YAML.
     fn parse_yaml(&self, marked_yaml: &Vec<MarkedYaml>) -> miette::Result<Root> {
         let root = marked_yaml.first().expect("parsed.len() == 1");
-        let config = self.config(root).unwrap();
+        let config = self.config(root)?;
         let mut templates = config.clone();
-        templates.append(&mut self.tokens().unwrap());
-        let positions = self.positions(root, &mut templates).unwrap();
+        templates.append(&mut self.tokens().map_err(|err| miette!("{err}"))?);
+        let positions = self.positions(root, &mut templates)?;
         let tokens_used: BTreeMap<String, TokenInfo> = templates
             .iter()
             .filter(|(_, v)| v.is_used)
