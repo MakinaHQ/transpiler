@@ -2,15 +2,11 @@ use eyre::Report;
 use thiserror::Error;
 
 use crate::core::parser::errors::ParserError;
-use crate::core::parser::positions::errors::PositionParserError;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Parser error: {0}")]
     Parser(#[from] ParserError),
-
-    #[error("Parser error: {0}")]
-    Position(#[from] PositionParserError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

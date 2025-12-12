@@ -20,10 +20,16 @@ Compile a YAML instruction file to a rootfile:
 cargo run -p transpiler -- -i input.yaml -o rootfile.toml
 ```
 
+When using token lists:
+
+```bash
+cargo run -p transpiler -- -i input.yaml -o rootfile.toml -t token_list.json
+```
+
 Example with test data:
 
 ```bash
-cargo run -p transpiler -- -i crates/transpiler/test_data/caliber.yaml -o output.toml
+cargo run -p transpiler -- -i test_data/caliber.yaml -o output.toml -t test_data/token_lists/test.json
 ```
 
 ## DSL Format

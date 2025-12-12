@@ -1,4 +1,5 @@
 pub mod blueprint;
+pub mod common;
 pub mod errors;
 pub mod helpers;
 pub mod include;

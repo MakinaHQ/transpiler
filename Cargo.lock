@@ -75,12 +75,13 @@ dependencies = [
 
 [[package]]
 name = "alloy-chains"
-version = "0.2.17"
+version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6068f356948cd84b5ad9ac30c50478e433847f14a50714d2b68f15d052724049"
+checksum = "4bc32535569185cbcb6ad5fa64d989a47bccb9a08e27284b1f2a3ccf16e6d010"
 dependencies = [
  "alloy-primitives",
  "num_enum",
+ "serde",
  "strum",
 ]
 
@@ -2191,6 +2192,12 @@ name = "doctest-file"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aac81fa3e28d21450aa4d2ac065992ba96a1d7303efbce51a95f4fd175b67562"
+
+[[package]]
+name = "dotenv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
 name = "dprint-core"
@@ -5606,8 +5613,10 @@ name = "transpiler"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "alloy-chains",
  "clap",
  "color-eyre",
+ "dotenv",
  "dprint-plugin-toml",
  "eyre",
  "governor",
@@ -5619,6 +5628,7 @@ dependencies = [
  "saphyr",
  "saphyr-parser",
  "serde",
+ "serde_json",
  "serde_repr",
  "thiserror 2.0.17",
  "tokio",

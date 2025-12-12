@@ -1,0 +1,20 @@
+{
+    "name": "TEST-TOKEN-LIST",
+    "timestamp": "2025-11-27T10:03:20.684+00:00",
+    "tokens": [
+        {
+            "chainId": 1,
+            "address": "0x1e33E98aF620F1D563fcD3cfd3C75acE841204ef",
+            "name": "Dialectic USD",
+            "symbol": "DUSD",
+            "decimals": 18
+        },
+        {
+            "chainId": 1,
+            "address": "0x871aB8E36CaE9AF35c6A3488B049965233DeB7ed",
+            "name": "Dialectic ETH",
+            "symbol": "DETH",
+            "decimals": 18
+        }
+    ]
+}

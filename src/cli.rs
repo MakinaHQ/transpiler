@@ -35,6 +35,11 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     #[clap(default_value = "caliber.yaml")]
     pub input_file: PathBuf,
+
+    /// Path to the json token list.
+    /// Required if instructions refer to `token_list`.
+    #[arg(short, long)]
+    pub token_list: Option<PathBuf>,
 }
 
 impl Cli {
