@@ -43,10 +43,10 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
 
     let parsed = PositionParser::new(cli.input_file.clone(), cli.token_list.clone())?
         .parse()
-        .map_err(|err| miette!("{}", err))?;
+        .map_err(|err| miette!("{:?}", err))?;
 
     let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
-        .map_err(|err| miette!("{}", err))?;
+        .map_err(|err| miette!("{:?}", err))?;
 
     match cli.command() {
         Command::Transpile => {

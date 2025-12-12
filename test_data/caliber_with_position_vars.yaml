@@ -1,0 +1,31 @@
+# Example caliber config that demonstrates position-level variables.
+# Multiple positions can reuse the same generic instruction template
+# by passing different values through the `vars` field.
+#
+# The type of each variable is inferred from the instruction where it's used.
+
+config:
+  caliber_address:
+    type: "address"
+    value: "0xd1da9924c8ea15a8e35951b4702aa4937a9dd70a"
+
+positions:
+  # Position 1: WETH vault (using shorthand syntax)
+  - id: "241963968685402655309198654686298022078"
+    group_id: "0"
+    description: "Aave v3 supply WETH"
+    vars:
+      token_address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+      aave_token_address: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8"
+      vault_label: "weth"
+    instructions: !include "./instructions/generic-deposit.yaml"
+
+  # Position 2: USDC vault (using shorthand syntax)
+  - id: "123456789012345678901234567890123456789"
+    group_id: "0"
+    description: "Aave v3 supply USDC"
+    vars:
+      token_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      aave_token_address: "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+      vault_label: "usdc"
+    instructions: !include "./instructions/generic-deposit.yaml"
