@@ -171,7 +171,8 @@ impl PositionParser {
         let mut vec = Vec::new();
         for position in positions_seq {
             // Parse position-level variables and add them to the template context
-            let position_vars = self.position_vars(position)?;
+            // Pass templates so position vars can reference token_list or config variables
+            let position_vars = self.position_vars(position, templates)?;
             let position_var_keys: Vec<String> = position_vars.keys().cloned().collect();
 
             // Inject position vars into templates for this position
@@ -198,15 +199,20 @@ impl PositionParser {
     /// Parse position-level variables from the `vars` field.
     /// Type is inferred from the instruction where the variable is used.
     ///
+    /// Supports:
+    /// - Raw values: `token_address: "0x..."`
+    /// - Token list references: `token_address: "${token_list.mainnet.USDC}"`
+    ///
     /// Example:
     /// ```yaml
     /// vars:
-    ///   token_address: "0x..."
+    ///   token_address: "${token_list.mainnet.USDC}"
     ///   vault_label: "My Vault"
     /// ```
     fn position_vars<'a>(
         &self,
         position: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
     ) -> miette::Result<BTreeMap<String, InstructionTemplate>> {
         let Some(vars) = position.data.as_mapping_get("vars") else {
             return Ok(BTreeMap::new());
@@ -230,10 +236,28 @@ impl PositionParser {
                 .ok_or(self.error(value.span, "position var value must be a string"))?;
 
             let template_key = format!("${{position.{name}}}");
-            map.insert(
-                template_key,
-                InstructionTemplate::new(InstructionTemplateEnum::PositionVar(raw_str.to_string())),
-            );
+
+            // Check if this is a template variable reference (e.g., ${token_list.mainnet.USDC})
+            if self.is_template(value) {
+                // Look up the template (e.g., token_list or config)
+                if let Some(template) = templates.get_mut(raw_str) {
+                    // Mark the original template as used (for tracking in root.tokens)
+                    template.is_used = true;
+                    map.insert(template_key, template.clone());
+                } else {
+                    return Err(
+                        self.error(value.span, "unknown template variable in position var")
+                    )?;
+                }
+            } else {
+                // Raw value: store as PositionVar with type inferred at usage
+                map.insert(
+                    template_key,
+                    InstructionTemplate::new(InstructionTemplateEnum::PositionVar(
+                        raw_str.to_string(),
+                    )),
+                );
+            }
         }
 
         Ok(map)
@@ -724,11 +748,12 @@ impl PositionParser {
             use saphyr::Yaml;
             let yaml_value = Yaml::scalar_from_string(raw_str.clone());
             let parsed_value =
-                sol_types::parse_sol_value(&r#type.inner, &yaml_value, "position var")
-                    .map_err(|_| {
+                sol_types::parse_sol_value(&r#type.inner, &yaml_value, "position var").map_err(
+                    |_| {
                         self.error(value_field, "could not be parsed...")
                             .with_second_location(r#type.span, "...into specified type")
-                    })?;
+                    },
+                )?;
 
             // Mark as used
             value.is_used = true;
@@ -899,5 +924,58 @@ mod tests {
             pos1_token.value.as_address().unwrap(),
             pos2_token.value.as_address().unwrap()
         );
+    }
+
+    #[test]
+    fn test_position_vars_with_token_list() {
+        // Test that position vars can reference token_list variables
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_with_token_list_vars.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+        )
+        .unwrap();
+
+        let root = parser.parse().unwrap();
+
+        // Should have 2 positions
+        assert_eq!(root.positions.len(), 2);
+
+        // Position 1: DUSD vault (token from token_list)
+        let pos1 = &root.positions[0];
+        let deposit_instr = &pos1.instructions[0];
+
+        // Check that token_address was resolved from token_list
+        assert_eq!(
+            deposit_instr.affected_tokens[0],
+            address!("0x1e33E98aF620F1D563fcD3cfd3C75acE841204ef") // DUSD address
+        );
+
+        // Check the input was substituted with token_list value
+        let token_input = deposit_instr.definition.inputs.get("token").unwrap();
+        assert_eq!(
+            token_input.value.as_address().unwrap(),
+            address!("0x1e33E98aF620F1D563fcD3cfd3C75acE841204ef") // DUSD address
+        );
+
+        // Position 2: DETH vault (token from token_list)
+        let pos2 = &root.positions[1];
+        let deposit_instr2 = &pos2.instructions[0];
+
+        // Check that token_address was resolved from token_list
+        assert_eq!(
+            deposit_instr2.affected_tokens[0],
+            address!("0x871aB8E36CaE9AF35c6A3488B049965233DeB7ed") // DETH address
+        );
+
+        // Check the input was substituted with token_list value
+        let token_input2 = deposit_instr2.definition.inputs.get("token").unwrap();
+        assert_eq!(
+            token_input2.value.as_address().unwrap(),
+            address!("0x871aB8E36CaE9AF35c6A3488B049965233DeB7ed") // DETH address
+        );
+
+        // Verify that tokens from token_list are included in the output
+        assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
+        assert!(root.tokens.contains_key("${token_list.mainnet.DETH}"));
     }
 }
