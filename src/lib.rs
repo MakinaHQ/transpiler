@@ -3,6 +3,7 @@ pub mod cli;
 pub mod core;
 pub mod errors;
 pub mod etherscan;
+pub mod merkletree;
 pub mod meta_sol_types;
 pub mod token_list;
 pub mod types;
@@ -44,20 +45,25 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .parse()
         .map_err(|err| miette!("{}", err))?;
 
-    if let Some(Command::Check) = cli.command {
-        let check = Check::new(cli.input_file.clone(), parsed, cli.github_errors);
-        return check
-            .all_addresses_verified()
-            .await
-            .map_err(|err| miette!("{}", err));
-    }
-
-    let rootfile = get_rootfile_from_positions(parsed.positions, parsed.tokens)
+    let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
         .map_err(|err| miette!("{}", err))?;
 
-    write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))?;
-
-    Ok(())
+    match cli.command() {
+        Command::Transpile => {
+            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
+        }
+        Command::Check { github_errors } => {
+            let check = Check::new(cli.input_file.clone(), parsed, github_errors);
+            check
+                .all_addresses_verified()
+                .await
+                .map_err(|err| miette!("{}", err))
+        }
+        Command::Root => {
+            println!("calculated root: {}", rootfile.root());
+            Ok(())
+        }
+    }
 }
 
 /// Writes formatted rootfile to path
@@ -83,7 +89,14 @@ fn write_rootfile(content: &Rootfile, out: &PathBuf) -> Result<()> {
         None => text,
     };
 
-    std::fs::write(out, formatted)?;
+    std::fs::write(
+        out,
+        format!(
+            "# this is a generated file - do not edit manually\n# root: {}\n\n{}",
+            content.root(),
+            formatted
+        ),
+    )?;
 
     println!("✅ Rootfile successfully transpiled to: {}", out.display());
 
