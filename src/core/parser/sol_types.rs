@@ -37,6 +37,119 @@ pub enum SolTypeError {
 
 pub type SolTypeResult<T> = Result<T, SolTypeError>;
 
+/// Parse a uint string, supporting scientific notation (e.g., "1e18", "1E18").
+pub fn parse_uint_str(s: &str) -> SolTypeResult<U256> {
+    // Check for scientific notation (e.g., "1e18", "1E18", "5e6")
+    if let Some(e_pos) = s.to_lowercase().find('e') {
+        let (mantissa_str, exp_str) = s.split_at(e_pos);
+        let exp_str = &exp_str[1..]; // Skip the 'e' or 'E'
+
+        // Parse mantissa - could be integer or decimal
+        let (mantissa, decimal_places) = if let Some(dot_pos) = mantissa_str.find('.') {
+            let integer_part = &mantissa_str[..dot_pos];
+            let fractional_part = &mantissa_str[dot_pos + 1..];
+            let combined = format!("{}{}", integer_part, fractional_part);
+            let mantissa = U256::from_str(&combined)
+                .map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))?;
+            (mantissa, fractional_part.len())
+        } else {
+            let mantissa = U256::from_str(mantissa_str)
+                .map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))?;
+            (mantissa, 0)
+        };
+
+        // Parse exponent
+        let exp: i32 = exp_str.parse().map_err(|_| {
+            SolTypeError::InvalidSolValue(format!("Invalid exponent in scientific notation: {}", s))
+        })?;
+
+        // Adjust exponent for decimal places in mantissa
+        let effective_exp = exp - decimal_places as i32;
+
+        if effective_exp < 0 {
+            return Err(SolTypeError::InvalidSolValue(format!(
+                "Scientific notation would result in non-integer value: {}",
+                s
+            )));
+        }
+
+        // Calculate 10^effective_exp
+        let multiplier = U256::from(10u64).pow(U256::from(effective_exp as u64));
+        let value = mantissa.checked_mul(multiplier).ok_or_else(|| {
+            SolTypeError::InvalidSolValue(format!("Overflow in scientific notation: {}", s))
+        })?;
+
+        Ok(value)
+    } else {
+        // Standard integer parsing
+        U256::from_str(s).map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))
+    }
+}
+
+/// Parse a sol value directly from a raw string, without going through YAML.
+/// This is useful for position variables where the type is inferred from usage.
+pub fn parse_sol_value_from_str(sol_type: &DynSolType, raw_str: &str) -> SolTypeResult<DynSolValue> {
+    match sol_type {
+        DynSolType::Bool => {
+            let value: bool = raw_str.parse().map_err(|_| {
+                SolTypeError::InvalidSolValue(format!(
+                    "Expected valid boolean, got string: {}",
+                    raw_str
+                ))
+            })?;
+            Ok(DynSolValue::Bool(value))
+        }
+        DynSolType::Int(bits) => {
+            let value = if raw_str.starts_with("0x") {
+                I256::from_hex_str(raw_str)
+                    .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+            } else {
+                I256::from_dec_str(raw_str)
+                    .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+            };
+            Ok(DynSolValue::Int(value, *bits))
+        }
+        DynSolType::Uint(bits) => {
+            let value = parse_uint_str(raw_str)?;
+            Ok(DynSolValue::Uint(value, *bits))
+        }
+        DynSolType::Address => {
+            let value = Address::from_str(raw_str)
+                .map_err(|err| SolTypeError::InvalidHexValue(Box::new(err)))?;
+            Ok(DynSolValue::Address(value))
+        }
+        DynSolType::FixedBytes(bytes) => {
+            let mut value = hex::decode(raw_str)
+                .map_err(|err| SolTypeError::InvalidHexValue(Box::new(err)))?;
+
+            if value.len() != *bytes {
+                return Err(SolTypeError::InvalidSolValue(format!(
+                    "Expected {} bytes, got {}",
+                    *bytes,
+                    value.len()
+                )));
+            }
+
+            if value.len() < 32 {
+                value.resize(32, 0);
+            }
+
+            let value = FixedBytes::from_slice(&value);
+            Ok(DynSolValue::FixedBytes(value, *bytes))
+        }
+        DynSolType::String => Ok(DynSolValue::String(raw_str.to_string())),
+        DynSolType::Bytes => {
+            let value = hex::decode(raw_str)
+                .map_err(|err| SolTypeError::InvalidHexValue(Box::new(err)))?;
+            Ok(DynSolValue::Bytes(value))
+        }
+        _ => Err(SolTypeError::InvalidSolValue(format!(
+            "Unsupported type for raw string parsing: {}",
+            sol_type
+        ))),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct YamlSolValue {
     pub r#type: DynSolType,
@@ -102,8 +215,7 @@ pub fn parse_sol_value(
         }
         DynSolType::Uint(bits) => {
             let yaml_value = yaml.as_str().ok_or(ParserError::InvalidYaml)?;
-            let value = U256::from_str(yaml_value)
-                .map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))?;
+            let value = parse_uint_str(yaml_value)?;
             Ok(DynSolValue::Uint(value, *bits))
         }
         DynSolType::Address => {
@@ -224,5 +336,66 @@ fn unmark<'a>(input: MarkedYaml<'a>) -> Yaml<'a> {
         }
         YamlData::BadValue => Yaml::BadValue,
         YamlData::Alias(alias) => Yaml::Alias(alias),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_uint_str_plain() {
+        // Plain integers should work
+        assert_eq!(parse_uint_str("100000").unwrap(), U256::from(100000u64));
+        assert_eq!(parse_uint_str("0").unwrap(), U256::ZERO);
+        assert_eq!(parse_uint_str("1").unwrap(), U256::from(1u64));
+    }
+
+    #[test]
+    fn test_parse_uint_str_scientific_notation() {
+        // 1e18 = 1 * 10^18 = 1000000000000000000
+        assert_eq!(
+            parse_uint_str("1e18").unwrap(),
+            U256::from(1_000_000_000_000_000_000u64)
+        );
+
+        // 1E18 (uppercase) should work too
+        assert_eq!(
+            parse_uint_str("1E18").unwrap(),
+            U256::from(1_000_000_000_000_000_000u64)
+        );
+
+        // 5e6 = 5000000
+        assert_eq!(parse_uint_str("5e6").unwrap(), U256::from(5_000_000u64));
+
+        // 10e2 = 1000
+        assert_eq!(parse_uint_str("10e2").unwrap(), U256::from(1000u64));
+
+        // 1e0 = 1
+        assert_eq!(parse_uint_str("1e0").unwrap(), U256::from(1u64));
+    }
+
+    #[test]
+    fn test_parse_uint_str_decimal_with_exponent() {
+        // 1.5e18 = 1500000000000000000
+        assert_eq!(
+            parse_uint_str("1.5e18").unwrap(),
+            U256::from(1_500_000_000_000_000_000u64)
+        );
+
+        // 2.5e6 = 2500000
+        assert_eq!(parse_uint_str("2.5e6").unwrap(), U256::from(2_500_000u64));
+
+        // 1.23e3 = 1230
+        assert_eq!(parse_uint_str("1.23e3").unwrap(), U256::from(1230u64));
+    }
+
+    #[test]
+    fn test_parse_uint_str_invalid() {
+        // Negative exponent that results in non-integer should fail
+        assert!(parse_uint_str("1e-1").is_err());
+
+        // Invalid exponent
+        assert!(parse_uint_str("1eabc").is_err());
     }
 }

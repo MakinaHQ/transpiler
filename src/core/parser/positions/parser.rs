@@ -745,15 +745,12 @@ impl PositionParser {
 
         // Handle PositionVar: parse the raw string using the expected type from the instruction
         if let InstructionTemplateEnum::PositionVar(raw_str) = &value.template {
-            use saphyr::Yaml;
-            let yaml_value = Yaml::scalar_from_string(raw_str.clone());
+            // Use parse_sol_value_from_str to avoid YAML parsing issues with scientific notation
             let parsed_value =
-                sol_types::parse_sol_value(&r#type.inner, &yaml_value, "position var").map_err(
-                    |_| {
-                        self.error(value_field, "could not be parsed...")
-                            .with_second_location(r#type.span, "...into specified type")
-                    },
-                )?;
+                sol_types::parse_sol_value_from_str(&r#type.inner, raw_str).map_err(|_| {
+                    self.error(value_field, "could not be parsed...")
+                        .with_second_location(r#type.span, "...into specified type")
+                })?;
 
             // Mark as used
             value.is_used = true;
