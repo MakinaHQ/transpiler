@@ -45,8 +45,8 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .parse()
         .map_err(|err| miette!("{}", err))?;
 
-    let rootfile =
-        get_rootfile_from_positions(&parsed.positions, &parsed.tokens).map_err(|err| miette!("{}", err))?;
+    let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
+        .map_err(|err| miette!("{}", err))?;
 
     match cli.command() {
         Command::Transpile => {

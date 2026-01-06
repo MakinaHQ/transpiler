@@ -37,7 +37,7 @@ pub fn get_rootfile_from_positions(
     }
 
     let rootfile: Rootfile = instructions.into();
-    Ok(rootfile.with_tokens(tokens_used))
+    Ok(rootfile.with_tokens(tokens_used.clone()))
 }
 
 pub fn create_rootfile_instructions(
