@@ -1,0 +1,34 @@
+# Generic deposit instruction template that uses position-level variables.
+# This allows reusing the same instruction file for different vaults/tokens
+# by passing different values through ${position.xxx} variables.
+
+- name: deposit
+  is_debt: false
+  instruction_type: "MANAGEMENT"
+  affected_tokens:
+    - ${position.token_address}
+  instruction:
+    label: ${position.vault_label}
+    path: "./blueprints/deposit.yaml:deposit"
+    inputs:
+      on_behalf_of:
+        type: "address"
+        value: ${config.caliber_address}
+      token:
+        type: "address"
+        value: ${position.token_address}
+
+- is_debt: false
+  instruction_type: "ACCOUNTING"
+  affected_tokens:
+    - ${position.token_address}
+  instruction:
+    label: ${position.vault_label}
+    path: "./blueprints/account.yaml:account"
+    inputs:
+      aave_token:
+        type: "address"
+        value: ${position.aave_token_address}
+      account:
+        type: "address"
+        value: ${config.caliber_address}

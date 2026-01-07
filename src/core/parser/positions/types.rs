@@ -69,6 +69,7 @@ pub enum InstructionTemplateEnum {
     Config(YamlSolValue),
     Raw(YamlSolValue),
     TokenInfo(TokenInfo),
+    PositionVar(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +98,13 @@ impl InstructionTemplate {
             InstructionTemplateEnum::Raw(raw) => &raw.r#type,
             InstructionTemplateEnum::Config(config) => &config.r#type,
             InstructionTemplateEnum::TokenInfo(_) => &DynSolType::Address,
+            InstructionTemplateEnum::PositionVar(_) => {
+                panic!("PositionVar type must be inferred from usage context")
+            }
         }
+    }
+
+    pub fn has_known_type(&self) -> bool {
+        !matches!(self.template, InstructionTemplateEnum::PositionVar(_))
     }
 }
