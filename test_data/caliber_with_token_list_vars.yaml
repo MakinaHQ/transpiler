@@ -1,0 +1,28 @@
+# Example caliber config that demonstrates using token_list in position-level variables.
+# This allows referencing tokens from the token list in position vars.
+
+config:
+  caliber_address:
+    type: "address"
+    value: "0xd1da9924c8ea15a8e35951b4702aa4937a9dd70a"
+
+positions:
+  # Position 1: DUSD vault (using token_list variable in position vars)
+  - id: "241963968685402655309198654686298022078"
+    group_id: "0"
+    description: "Deposit DUSD"
+    vars:
+      token_address: ${token_list.mainnet.DUSD}
+      aave_token_address: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8"
+      vault_label: "dusd"
+    instructions: !include "./instructions/generic-deposit.yaml"
+
+  # Position 2: DETH vault (using token_list variable in position vars)
+  - id: "123456789012345678901234567890123456789"
+    group_id: "0"
+    description: "Deposit DETH"
+    vars:
+      token_address: ${token_list.mainnet.DETH}
+      aave_token_address: "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+      vault_label: "deth"
+    instructions: !include "./instructions/generic-deposit.yaml"

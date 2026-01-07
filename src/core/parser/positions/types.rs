@@ -69,6 +69,7 @@ pub enum InstructionTemplateEnum {
     Config(YamlSolValue),
     Raw(YamlSolValue),
     TokenInfo(TokenInfo),
+    PositionVar(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,11 +93,12 @@ impl InstructionTemplate {
         }
     }
 
-    pub fn as_type(&self) -> &DynSolType {
+    pub fn as_type(&self) -> Option<&DynSolType> {
         match &self.template {
-            InstructionTemplateEnum::Raw(raw) => &raw.r#type,
-            InstructionTemplateEnum::Config(config) => &config.r#type,
-            InstructionTemplateEnum::TokenInfo(_) => &DynSolType::Address,
+            InstructionTemplateEnum::Raw(raw) => Some(&raw.r#type),
+            InstructionTemplateEnum::Config(config) => Some(&config.r#type),
+            InstructionTemplateEnum::TokenInfo(_) => Some(&DynSolType::Address),
+            InstructionTemplateEnum::PositionVar(_) => None,
         }
     }
 }
