@@ -35,7 +35,7 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     #[clap(default_value = "caliber.yaml")]
     pub input_file: PathBuf,
-    
+
     /// Render errors as github workflow commands.
     /// Currently only implemented for checks.
     #[arg(long)]
