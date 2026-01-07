@@ -324,7 +324,7 @@ impl PositionParser {
         for token in tokens_seq {
             let parsed = self.parse_template(token, templates, true)?;
 
-            if parsed.as_type() != &DynSolType::Address {
+            if parsed.as_type() != Some(&DynSolType::Address) {
                 return Err(self.error(
                     token.span,
                     "affected_token template must resolve to an Address",
@@ -340,7 +340,10 @@ impl PositionParser {
                 }
                 InstructionTemplateEnum::TokenInfo(ref token_info) => token_info.address,
                 InstructionTemplateEnum::PositionVar(_) => {
-                    unreachable!("PositionVar is resolved to Raw in parse_template")
+                    return Err(self.error(
+                        token.span,
+                        "PositionVar is resolved to Raw in parse_template",
+                    ))?;
                 }
             };
 
@@ -446,7 +449,7 @@ impl PositionParser {
             .ok_or(self.error(input.span, "instruction input type is required"))?
             .span;
 
-        if parsed.as_type().is_dynamic() {
+        if parsed.as_type().map(|t| t.is_dynamic()).unwrap_or(false) {
             return Err(self.error(type_span, "dynamic types not supported"))?;
         }
 
@@ -460,7 +463,10 @@ impl PositionParser {
         };
 
         Ok(SolValue {
-            r#type: parsed.as_type().clone(),
+            r#type: parsed
+                .as_type()
+                .cloned()
+                .ok_or_else(|| self.error(type_span, "type is required"))?,
             value,
             description: None,
         })
@@ -750,7 +756,7 @@ impl PositionParser {
             )));
         }
 
-        if value.as_type() != &r#type.inner {
+        if value.as_type() != Some(&r#type.inner) {
             return Err(self
                 .error(value_field, "has unexpected type")
                 .with_second_location(r#type.span, "expected type"))?;

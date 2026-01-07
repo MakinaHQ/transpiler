@@ -93,18 +93,12 @@ impl InstructionTemplate {
         }
     }
 
-    pub fn as_type(&self) -> &DynSolType {
+    pub fn as_type(&self) -> Option<&DynSolType> {
         match &self.template {
-            InstructionTemplateEnum::Raw(raw) => &raw.r#type,
-            InstructionTemplateEnum::Config(config) => &config.r#type,
-            InstructionTemplateEnum::TokenInfo(_) => &DynSolType::Address,
-            InstructionTemplateEnum::PositionVar(_) => {
-                panic!("PositionVar type must be inferred from usage context")
-            }
+            InstructionTemplateEnum::Raw(raw) => Some(&raw.r#type),
+            InstructionTemplateEnum::Config(config) => Some(&config.r#type),
+            InstructionTemplateEnum::TokenInfo(_) => Some(&DynSolType::Address),
+            InstructionTemplateEnum::PositionVar(_) => None,
         }
-    }
-
-    pub fn has_known_type(&self) -> bool {
-        !matches!(self.template, InstructionTemplateEnum::PositionVar(_))
     }
 }
