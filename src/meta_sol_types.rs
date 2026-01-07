@@ -49,8 +49,6 @@ pub trait MetaTypeDef {
         &self,
         values: HashMap<String, DynSolValue>,
     ) -> Result<HashMap<String, Vec<u8>>, String> {
-        use alloy::sol_types::SolValue;
-
         let props = self.properties();
         let mut result = HashMap::with_capacity(props.len());
 
