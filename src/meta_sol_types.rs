@@ -60,7 +60,8 @@ pub trait MetaTypeDef {
                 .ok_or_else(|| format!("Missing field: {prop_name}"))?;
 
             let encoded = if prop_type.is_dynamic() {
-                // Dynamic types (bytes, string) have a 32-byte length prefix we need to skip
+                // Dynamic types (bytes, string, arrays) include a 32-byte offset pointer
+                // as the first word when ABI-encoded. We skip it to get length + data.
                 value.abi_encode().into_iter().skip(32).collect()
             } else {
                 value.abi_encode()
