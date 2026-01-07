@@ -9,6 +9,8 @@ use eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
+use crate::token_list::TokenInfo;
+
 use crate::merkletree::MerkleTree;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -166,6 +168,7 @@ impl MakinaInstruction {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rootfile {
+    pub tokens: BTreeMap<String, TokenInfo>,
     pub instructions: BTreeMap<String, BTreeMap<String, BTreeMap<String, MakinaInstruction>>>,
 }
 
@@ -210,6 +213,11 @@ impl Rootfile {
             }
         }
         instructions
+    }
+
+    pub fn with_tokens(mut self, tokens: BTreeMap<String, TokenInfo>) -> Self {
+        self.tokens = tokens;
+        self
     }
 
     /// returns all accounting instructions included in the rootfile

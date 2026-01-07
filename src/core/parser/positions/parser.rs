@@ -1,469 +1,551 @@
-use std::{collections::HashMap, fs::canonicalize, path::PathBuf, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::canonicalize,
+    path::PathBuf,
+    str::FromStr,
+};
 
 use alloy::{
     dyn_abi::DynSolType,
     primitives::{Address, U256},
 };
+use miette::{NamedSource, miette};
 use regex::Regex;
-use saphyr::{Mapping, Yaml};
+use saphyr::{LoadableYamlNode, MarkedYaml, Marker};
+use saphyr_parser::Span;
 
 use crate::{
-    core::parser::{YamlInclude, helpers, sol_types},
+    core::parser::{
+        YamlInclude,
+        common::{Marked, Parser},
+        helpers,
+        positions::types::{InstructionTemplate, InstructionTemplateEnum},
+        sol_types::{self, YamlSolValue},
+    },
+    token_list::{TokenInfo, TokenList},
     types::InstructionType,
 };
 
-use super::{
-    errors::{PositionParserError, PositionParserResult},
-    types::{Instruction, InstructionDefinition, Position, Root, SolValue},
-};
+use super::types::{Instruction, InstructionDefinition, Position, Root, SolValue};
 
+#[derive(Debug)]
 pub struct PositionParser {
     root_path: PathBuf,
+    token_list: TokenList,
+    _source: String,
     template_regex: Regex,
+    source_with_includes: String,
 }
 
 impl PositionParser {
     /// Create a new position parser.
-    pub fn new(root_path: PathBuf) -> Self {
-        Self {
-            root_path,
-            template_regex: Regex::new(r"\$\{(config)\.([a-zA-Z0-9_]+)\}").unwrap(),
-        }
-    }
-
-    /// Parse a position from a file.
-    pub fn parse(&self) -> PositionParserResult<Root> {
-        // Load the file and replace the builtins.
-        let includes = YamlInclude::new(self.root_path.clone())?;
-        let includes_fmt = format!("{includes}"); // This will parse the includes and output the final content.
-        let content = helpers::replace_builtins(&includes_fmt)?;
-
-        // Parse the YAML.
-        let yaml = helpers::load_yaml_from_str(&content, true)
-            .map_err(PositionParserError::FailedToLoadPosition)?;
-
-        // Parse the YAML.
-        self.parse_yaml(&yaml)
-    }
-
-    /// Parse positions from YAML.
-    fn parse_yaml(&self, yaml: &Yaml) -> PositionParserResult<Root> {
-        // Get the root map.
-        let root_map = helpers::get_mapping(yaml, "root")?;
-
-        // Parse the config and positions.
-        let config = self.parse_config(root_map)?;
-
-        // Parse the positions.
-        let positions = self.parse_positions(root_map, &config)?;
-
-        Ok(Root { config, positions })
-    }
-
-    /// Parse the config map.
-    fn parse_config(&self, root_map: &Mapping) -> PositionParserResult<HashMap<String, SolValue>> {
-        let config_map = helpers::get_mapping_field(root_map, "config", "root.config")?;
-
-        let mut config = HashMap::new();
-        for (key, value) in config_map.iter() {
-            let key = helpers::get_string(key, "root.config")?;
-            let sol_value = sol_types::parse_yaml_sol_value(value, "root.config")?;
-
-            let description = helpers::get_optional_string_field(
-                helpers::get_mapping(value, &format!("root.config.{key}"))?,
-                "description",
-                &format!("root.config.{key}"),
-            )?;
-
-            config.insert(
-                key.to_string(),
-                SolValue {
-                    r#type: sol_value.r#type,
-                    value: sol_value.value,
-                    description: description.map(|s| s.to_string()),
-                },
-            );
-        }
-
-        Ok(config)
-    }
-
-    /// Parse the positions.
-    fn parse_positions(
-        &self,
-        root_map: &Mapping,
-        config: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<Vec<Position>> {
-        let positions_seq = helpers::get_sequence_field(root_map, "positions", "root.positions")?;
-
-        let mut positions = Vec::new();
-        for (index, position) in positions_seq.iter().enumerate() {
-            let position_map = helpers::get_mapping(position, &format!("root.positions[{index}]"))?;
-
-            let id_str =
-                helpers::get_string_field(position_map, "id", &format!("root.positions[{index}]"))?;
-            let Ok(id) = U256::from_str(id_str) else {
-                return Err(PositionParserError::TypeMismatch {
-                    expected: "U256".into(),
-                    actual: id_str.into(),
-                });
-            };
-
-            let group_id_str = helpers::get_string_field(
-                position_map,
-                "group_id",
-                &format!("root.positions[{index}]"),
-            )?;
-            let Ok(group_id) = U256::from_str(group_id_str) else {
-                return Err(PositionParserError::TypeMismatch {
-                    expected: "U256".into(),
-                    actual: group_id_str.into(),
-                });
-            };
-
-            let description = helpers::get_optional_string_field(
-                helpers::get_mapping(position, &format!("root.positions[{index}]"))?,
-                "description",
-                &format!("root.positions[{index}]"),
-            )?;
-
-            let instructions = self.parse_instructions(position_map, config)?;
-
-            let position_tags = self.parse_position_tags(position_map)?;
-
-            positions.push(Position {
-                id,
-                group_id,
-                description: description.map(|s| s.to_string()),
-                instructions,
-                global_tags: position_tags,
-            });
-        }
-
-        Ok(positions)
-    }
-
-    /// Parse the instructions.
-    fn parse_instructions(
-        &self,
-        position_map: &Mapping,
-        configs: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<Vec<Instruction>> {
-        let instructions_seq = helpers::get_sequence_field(
-            position_map,
-            "instructions",
-            "root.positions.instructions",
-        )?;
-
-        let mut instructions = Vec::new();
-        for (index, instruction) in instructions_seq.iter().enumerate() {
-            let instruction_map = helpers::get_mapping(
-                instruction,
-                &format!("root.positions.instructions[{index}]"),
-            )?;
-
-            // Parse the is_debt flag.
-            let is_debt = helpers::get_bool_field(
-                instruction_map,
-                "is_debt",
-                &format!("root.positions.instructions[{index}]"),
-            )?;
-
-            // Parse the instruction type.
-            let instruction_type = helpers::get_string_field(
-                instruction_map,
-                "instruction_type",
-                &format!("root.positions.instructions[{index}]"),
-            )?;
-
-            let Ok(instruction_type) = InstructionType::from_str(instruction_type) else {
-                return Err(PositionParserError::InvalidInstructionType(
-                    instruction_type.to_string(),
-                ));
-            };
-
-            // Parse the description.
-            let description = helpers::get_optional_string_field(
-                instruction_map,
-                "description",
-                &format!("root.positions.instructions[{index}]"),
-            )?;
-
-            // Parse the affected tokens.
-            let affected_tokens = self.parse_affected_tokens(index, instruction_map)?;
-
-            // Parse the instruction.
-            let instruction = self.parse_instruction_dir(index, instruction_map, configs)?;
-
-            instructions.push(Instruction {
-                description: description.map(|s| s.to_string()),
-                is_debt,
-                instruction_type,
-                affected_tokens,
-                definition: instruction,
-            });
-        }
-
-        Ok(instructions)
-    }
-
-    /// Gets all tags defined for this position
-    fn parse_position_tags(
-        &self,
-        position_map: &Mapping,
-    ) -> PositionParserResult<Vec<(String, String)>> {
-        let Some(position_tags) =
-            helpers::get_optional_sequence_field(position_map, "tags", "root.positions")?
-        else {
-            return Ok(Vec::new());
+    pub fn new(root_path: PathBuf, token_list_path: Option<PathBuf>) -> miette::Result<Self> {
+        let token_list = if let Some(path) = token_list_path {
+            TokenList::new(path.clone())
+                .map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
+        } else {
+            TokenList::default()
         };
 
-        let mut result = Vec::new();
-        for (index, elem) in position_tags.iter().enumerate() {
-            let raw = helpers::get_string(elem, &format!("root.positions.tags[{index}]"))?;
+        let content = std::fs::read_to_string(&root_path)
+            .map_err(|err| miette!("could not open blueprint: {}", err))?;
 
-            let (tag, action) = raw
-                .split_once(':')
-                .ok_or(PositionParserError::InvalidTag { raw: raw.into() })?;
+        let source = helpers::replace_builtins(&content)
+            .map_err(|err| miette!("could not replace builtins: {err}"))?;
 
-            result.push((action.into(), tag.into()));
-        }
+        // Load the source position file, and add instructions using `!include`.
+        let includes = YamlInclude::new(root_path.clone())
+            .map_err(|err| miette!("could not load includes: {}", err))?;
+        let includes_fmt = format!("{includes}"); // This will parse the includes and output the final content.
+        let content = helpers::replace_builtins(&includes_fmt)
+            .map_err(|err| miette!("could not replace builtins: {}", err))?;
 
-        Ok(result)
-    }
-
-    /// Parse the instruction.
-    fn parse_instruction_dir(
-        &self,
-        index: usize,
-        instruction_map: &Mapping,
-        configs: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<InstructionDefinition> {
-        let instruction = helpers::get_mapping_field(
-            instruction_map,
-            "instruction",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
-
-        // Parse the override name, if any.
-        let override_name = helpers::get_optional_string_field(
-            instruction,
-            "name",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
-
-        // Parse the label.
-        let label = helpers::get_string_field(
-            instruction,
-            "label",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
-
-        // Parse the blueprint path.
-        let path = helpers::get_string_field(
-            instruction,
-            "path",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
-
-        let (blueprint_path, action_name) = path
-            .split_once(":")
-            .ok_or(PositionParserError::InvalidPath {
-                field_path: format!("root.positions.instructions[{index}].path"),
-                value: path.to_string(),
-            })
-            .and_then(|(blueprint_path, action_name)| {
-                let blueprint_path =
-                    self.process_blueprint_path(index, &PathBuf::from(blueprint_path))?;
-
-                Ok((blueprint_path, action_name.to_string()))
-            })?;
-
-        let inputs = self.parse_inputs(index, instruction, configs)?;
-
-        Ok(InstructionDefinition {
-            inputs,
-            blueprint_path,
-            label: label.to_string(),
-            name: action_name.to_string(),
-            override_name: override_name.map(|s| s.to_string()),
+        Ok(Self {
+            root_path,
+            token_list,
+            _source: source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").expect("is valid regex"),
+            source_with_includes: content,
         })
     }
 
-    /// Parse the inputs.
-    fn parse_inputs(
-        &self,
-        index: usize,
-        instruction: &Mapping,
-        configs: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<HashMap<String, SolValue>> {
-        let inputs_map = helpers::get_mapping_field(
-            instruction,
-            "inputs",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
+    /// Parse a position from a file.
+    pub fn parse(&self) -> miette::Result<Root> {
+        let marked_yaml = MarkedYaml::load_from_str(&self.source_with_includes)
+            .map_err(|err| miette!("could not parse positions file: {err}"))?;
 
-        let mut inputs = HashMap::new();
-        for (key, value) in inputs_map.iter() {
-            let key = helpers::get_string(key, &format!("root.positions.instructions[{index}]"))?;
-
-            // Parse the input.
-            let input_map = helpers::get_mapping(
-                value,
-                &format!("root.positions.instructions[{index}].{key}"),
-            )?;
-
-            let sol_value = self.parse_input(index, key, input_map, configs)?;
-
-            inputs.insert(key.to_string(), sol_value);
-        }
-
-        Ok(inputs)
+        // Parse the YAML.
+        self.parse_yaml(&marked_yaml)
     }
 
-    /// Parse a single input.
-    fn parse_input(
+    /// Parse positions from YAML.
+    fn parse_yaml(&self, marked_yaml: &Vec<MarkedYaml>) -> miette::Result<Root> {
+        let root = marked_yaml.first().expect("parsed.len() == 1");
+        let config = self.config(root)?;
+        let mut templates = config.clone();
+        templates.append(&mut self.tokens().map_err(|err| miette!("{err}"))?);
+        let positions = self.positions(root, &mut templates)?;
+        let tokens_used: BTreeMap<String, TokenInfo> = templates
+            .iter()
+            .filter(|(_, v)| v.is_used)
+            .filter_map(|(k, v)| v.as_token().map(|token| (k.clone(), token.clone())))
+            .collect();
+        Ok(Root {
+            tokens: tokens_used,
+            config,
+            positions,
+        })
+    }
+
+    fn tokens(&self) -> eyre::Result<BTreeMap<String, InstructionTemplate>> {
+        let mut map = BTreeMap::new();
+
+        for token in &self.token_list.tokens {
+            let chain = token.chain;
+            let symbol = &token.symbol;
+
+            let key = format!("${{token_list.{chain}.{symbol}}}");
+
+            if map.contains_key(&key) {
+                return Err(eyre::eyre!(
+                    "Duplicated token entry: \"{}\" - token entry is duplicated",
+                    key
+                ));
+            }
+
+            map.insert(
+                key,
+                InstructionTemplate::new(InstructionTemplateEnum::TokenInfo(token.clone())),
+            );
+        }
+
+        Ok(map)
+    }
+
+    fn config<'a>(
         &self,
-        index: usize,
-        key: &str,
-        input_map: &Mapping,
-        configs: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<SolValue> {
-        let type_yaml = helpers::get_string_field(
-            input_map,
-            "type",
-            &format!("root.positions.instructions[{index}].{key}"),
-        )?;
+        root: &'a MarkedYaml<'a>,
+    ) -> miette::Result<BTreeMap<String, InstructionTemplate>> {
+        let Some(config) = root.data.as_mapping_get("config") else {
+            return Ok(BTreeMap::new());
+        };
 
-        let sol_type = sol_types::parse_sol_type_str(type_yaml)?;
+        let mapping = config
+            .data
+            .as_mapping()
+            .ok_or(self.error(config.span, "config must be mapping"))?;
 
-        if matches!(
-            sol_type,
-            DynSolType::Array(_) | DynSolType::FixedArray(_, _) | DynSolType::Tuple(_)
-        ) {
-            return Err(PositionParserError::InputTypeMustBeScalar {
-                field_path: format!("root.positions.instructions[{index}].{key}"),
-                found_type: sol_type.to_string(),
+        let mut map = BTreeMap::new();
+        for (key, value) in mapping {
+            let name = key
+                .data
+                .as_str()
+                .ok_or(self.error(key.span, "Config has invalid name"))?;
+
+            let key = format!("${{config.{name}}}");
+            let value = self.sol_value(value)?;
+            map.insert(
+                key,
+                InstructionTemplate::new(InstructionTemplateEnum::Config(value)),
+            );
+        }
+
+        Ok(map)
+    }
+
+    fn positions<'a>(
+        &self,
+        root: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<Vec<Position>> {
+        let positions = root
+            .data
+            .as_mapping_get("positions")
+            .ok_or(self.error(root.span, "positions are required"))?;
+
+        let positions_seq = positions
+            .data
+            .as_sequence()
+            .ok_or(self.error(root.span, "positions must be a sequence"))?;
+
+        let mut vec = Vec::new();
+        for position in positions_seq {
+            let instructions = self.instructions(position, templates)?;
+            vec.push(Position {
+                id: self.position_id(position)?,
+                group_id: self.position_group_id(position)?,
+                description: self.position_description(position)?,
+                instructions,
+                global_tags: self.position_tags(position)?,
             });
         }
+        Ok(vec)
+    }
 
-        let description = helpers::get_optional_string_field(
-            input_map,
-            "description",
-            &format!("root.positions.instructions[{index}].{key}"),
-        )?;
+    fn instruction_description<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+    ) -> miette::Result<Option<String>> {
+        let description = instruction.data.as_mapping_get("description");
 
-        let value_str = helpers::get_string_field(
-            input_map,
-            "value",
-            &format!("root.positions.instructions[{index}].{key}"),
-        )?;
-
-        if self.template_regex.is_match(value_str) {
-            self.resolve_template_variable(value_str, &sol_type, description, configs)
+        if let Some(desc) = description {
+            let desc_str = desc
+                .data
+                .as_str()
+                .ok_or(self.error(desc.span, "instruction description must be a string"))?;
+            Ok(Some(desc_str.to_string()))
         } else {
-            let value_yaml = helpers::get_field(input_map, "value", "root.positions.instructions")?;
-
-            let sol_value =
-                sol_types::parse_sol_value(&sol_type, value_yaml, "root.positions.instructions")?;
-
-            Ok(SolValue {
-                r#type: sol_type,
-                value: sol_value,
-                description: description.map(|s| s.to_string()),
-            })
+            Ok(None)
         }
     }
 
-    /// Resolve a template variable.
-    fn resolve_template_variable(
+    fn instruction_is_debt<'a>(&self, instruction: &'a MarkedYaml<'a>) -> miette::Result<bool> {
+        let is_debt = instruction
+            .data
+            .as_mapping_get("is_debt")
+            .ok_or(self.error(instruction.span, "is_debt boolean flag is required"))?;
+
+        let is_debt_bool = is_debt
+            .data
+            .as_bool()
+            .ok_or(self.error(is_debt.span, "is_debt must be a boolean"))?;
+        Ok(is_debt_bool)
+    }
+
+    fn instruction_type<'a>(
         &self,
-        value_str: &str,
-        sol_type: &DynSolType,
-        description: Option<&str>,
-        configs: &HashMap<String, SolValue>,
-    ) -> PositionParserResult<SolValue> {
-        let caps = self.template_regex.captures(value_str).ok_or_else(|| {
-            PositionParserError::InvalidTemplateVariable(format!(
-                "Not a valid template format: {value_str}"
-            ))
+        instruction: &'a MarkedYaml<'a>,
+    ) -> miette::Result<InstructionType> {
+        let instr_type = instruction
+            .data
+            .as_mapping_get("instruction_type")
+            .ok_or(self.error(instruction.span, "instruction_type is required"))?;
+
+        let instr_type_str = instr_type
+            .data
+            .as_str()
+            .ok_or(self.error(instr_type.span, "instruction_type must be a string"))?;
+
+        let instruction_type = InstructionType::from_str(instr_type_str).map_err(|_| {
+            self.error(
+                instr_type.span,
+                "instruction_type must be a valid InstructionType",
+            )
         })?;
 
-        let source = caps.get(1).map_or("", |m| m.as_str());
-        let name = caps.get(2).map_or("", |m| m.as_str());
+        Ok(instruction_type)
+    }
 
-        match source {
-            "config" => {
-                // Get the value from the config.
-                let value = configs.get(name).ok_or_else(|| {
-                    PositionParserError::TemplateVariableNotFound {
-                        source_path: "config".to_string(),
-                        variable: name.to_string(),
-                    }
-                })?;
+    fn instruction_affected_tokens<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<Vec<Address>> {
+        let affected_tokens = instruction
+            .data
+            .as_mapping_get("affected_tokens")
+            .ok_or(self.error(instruction.span, "affected_tokens is required"))?;
 
-                // Check if the type matches.
-                if value.r#type != *sol_type {
-                    return Err(PositionParserError::TypeMismatch {
-                        expected: sol_type.to_string(),
-                        actual: value.r#type.to_string(),
-                    });
-                }
+        let tokens_seq = affected_tokens
+            .data
+            .as_sequence()
+            .ok_or(self.error(affected_tokens.span, "affected_tokens must be a sequence"))?;
 
-                // Return the value.
-                Ok(SolValue {
-                    r#type: value.r#type.clone(),
-                    value: value.value.clone(),
-                    description: description.map(|s| s.to_string()),
-                })
+        let mut tokens = Vec::new();
+        for token in tokens_seq {
+            let parsed = self.parse_template(token, templates, true)?;
+
+            if parsed.as_type() != &DynSolType::Address {
+                return Err(self.error(
+                    token.span,
+                    "affected_token template must resolve to an Address",
+                ))?;
             }
-            _ => Err(PositionParserError::InvalidTemplateSource {
-                source_path: source.to_string(),
-                context: "config".to_string(),
-            }),
+
+            let affected_token = match parsed.template {
+                InstructionTemplateEnum::Config(ref config) => {
+                    config.value.as_address().expect("already checked the type")
+                }
+                InstructionTemplateEnum::Raw(ref raw) => {
+                    raw.value.as_address().expect("already checked the type")
+                }
+                InstructionTemplateEnum::TokenInfo(ref token_info) => token_info.address,
+            };
+
+            tokens.push(affected_token);
+        }
+
+        Ok(tokens)
+    }
+
+    fn instruction_definition_path_and_name<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+    ) -> miette::Result<(PathBuf, String)> {
+        let path = instruction
+            .data
+            .as_mapping_get("path")
+            .ok_or(self.error(instruction.span, "instruction path is required"))?;
+
+        let path_str = path
+            .data
+            .as_str()
+            .ok_or(self.error(path.span, "instruction path must be a string"))?;
+
+        let (blueprint_path_str, name) = path_str.split_once(":").ok_or(self.error(
+            path.span,
+            "instruction path must be in format 'path:action_name'",
+        ))?;
+
+        // break path span into blueprint path span and action name span
+        let path_span = Span {
+            start: path.span.start,
+            end: Marker::new(
+                path.span.start.index() + blueprint_path_str.len() + 1,
+                path.span.start.line(),
+                path.span.start.col() + blueprint_path_str.len() + 1,
+            ),
+        };
+
+        let blueprint_path =
+            self.process_blueprint_path(&PathBuf::from(blueprint_path_str), path_span)?;
+
+        Ok((blueprint_path, name.to_string()))
+    }
+
+    fn instruction_label<'a>(&self, instruction: &'a MarkedYaml<'a>) -> miette::Result<String> {
+        let label = instruction
+            .data
+            .as_mapping_get("label")
+            .ok_or(self.error(instruction.span, "instruction label is required"))?;
+        let label_str = label
+            .data
+            .as_str()
+            .ok_or(self.error(label.span, "instruction label must be a string"))?;
+
+        Ok(label_str.to_string())
+    }
+
+    fn instruction_input<'a>(
+        &self,
+        input: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<SolValue> {
+        let parsed = self.parse_template(input, templates, false)?;
+
+        let type_span = input
+            .data
+            .as_mapping_get("type")
+            .ok_or(self.error(input.span, "instruction input type is required"))?
+            .span;
+
+        // Ensure it is a scalar type
+        if parsed.as_type().is_dynamic() {
+            return Err(self.error(type_span, "dynamic types not supported"))?;
+        }
+
+        let value = match parsed.template.clone() {
+            InstructionTemplateEnum::Config(config) => config.value,
+            InstructionTemplateEnum::Raw(raw) => raw.value,
+            InstructionTemplateEnum::TokenInfo(token_info) => token_info.address.into(),
+        };
+
+        Ok(SolValue {
+            r#type: parsed.as_type().clone(),
+            value,
+            description: None,
+        })
+    }
+
+    fn instruction_inputs<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<HashMap<String, SolValue>> {
+        let inputs = instruction
+            .data
+            .as_mapping_get("inputs")
+            .ok_or(self.error(instruction.span, "instruction inputs are required"))?;
+
+        let inputs_map = inputs
+            .data
+            .as_mapping()
+            .ok_or(self.error(inputs.span, "instruction inputs must be a mapping"))?;
+
+        let mut map = HashMap::new();
+        for (key, value) in inputs_map {
+            let input = self.instruction_input(value, templates)?;
+            let key_str = key
+                .data
+                .as_str()
+                .ok_or(self.error(key.span, "instruction input key must be a string"))?;
+            map.insert(key_str.to_string(), input);
+        }
+
+        Ok(map)
+    }
+
+    fn instruction_definition<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<InstructionDefinition> {
+        let instruction_definition = instruction
+            .data
+            .as_mapping_get("instruction")
+            .ok_or(self.error(instruction.span, "instruction definition is required"))?;
+
+        let (blueprint_path, name) =
+            self.instruction_definition_path_and_name(instruction_definition)?;
+
+        let label = self.instruction_label(instruction_definition)?;
+
+        let inputs = self.instruction_inputs(instruction_definition, templates)?;
+
+        Ok(InstructionDefinition {
+            blueprint_path,
+            name,
+            label,
+            override_name: None,
+            inputs,
+        })
+    }
+
+    fn instruction<'a>(
+        &self,
+        instruction: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<Instruction> {
+        let description = self.instruction_description(instruction)?;
+        let is_debt = self.instruction_is_debt(instruction)?;
+        let instruction_type = self.instruction_type(instruction)?;
+        let affected_tokens = self.instruction_affected_tokens(instruction, templates)?;
+        let instruction_definition = self.instruction_definition(instruction, templates)?;
+
+        Ok(Instruction {
+            description,
+            is_debt,
+            instruction_type,
+            affected_tokens,
+            definition: instruction_definition,
+        })
+    }
+
+    fn instructions<'a>(
+        &self,
+        position: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+    ) -> miette::Result<Vec<Instruction>> {
+        let instructions = position
+            .data
+            .as_mapping_get("instructions")
+            .ok_or(self.error(position.span, "instructions are required"))?;
+
+        let instructions_seq = instructions
+            .data
+            .as_sequence()
+            .ok_or(self.error(instructions.span, "instructions must be a sequence"))?;
+
+        let mut vec = Vec::new();
+        for instruction in instructions_seq {
+            let instr = self.instruction(instruction, templates)?;
+            vec.push(instr);
+        }
+
+        Ok(vec)
+    }
+
+    fn position_id<'a>(&self, position: &'a MarkedYaml<'a>) -> miette::Result<U256> {
+        let id = position
+            .data
+            .as_mapping_get("id")
+            .ok_or(self.error(position.span, "position id is required"))?;
+
+        let id_str = id
+            .data
+            .as_str()
+            .ok_or(self.error(id.span, "position id must be a string"))?;
+
+        let id = U256::from_str(id_str)
+            .map_err(|_| self.error(id.span, "position id must be a valid U256 string"))?;
+
+        Ok(id)
+    }
+
+    fn position_group_id<'a>(&self, position: &'a MarkedYaml<'a>) -> miette::Result<U256> {
+        let group_id = position
+            .data
+            .as_mapping_get("group_id")
+            .ok_or(self.error(position.span, "position group_id is required"))?;
+
+        let group_id_str = group_id
+            .data
+            .as_str()
+            .ok_or(self.error(group_id.span, "position group_id must be a string"))?;
+
+        let group_id = U256::from_str(group_id_str).map_err(|_| {
+            self.error(
+                group_id.span,
+                "position group_id must be a valid U256 string",
+            )
+        })?;
+
+        Ok(group_id)
+    }
+
+    fn position_description<'a>(
+        &self,
+        position: &'a MarkedYaml<'a>,
+    ) -> miette::Result<Option<String>> {
+        let description = position.data.as_mapping_get("description");
+
+        if let Some(desc) = description {
+            let desc_str = desc
+                .data
+                .as_str()
+                .ok_or(self.error(desc.span, "position description must be a string"))?;
+            Ok(Some(desc_str.to_string()))
+        } else {
+            Ok(None)
         }
     }
 
-    /// Parse affected tokens list.
-    fn parse_affected_tokens(
+    fn position_tags<'a>(
         &self,
-        index: usize,
-        instruction_map: &Mapping,
-    ) -> PositionParserResult<Vec<Address>> {
-        let affected_tokens_yaml = helpers::get_sequence_field(
-            instruction_map,
-            "affected_tokens",
-            &format!("root.positions.instructions[{index}]"),
-        )?;
+        position: &'a MarkedYaml<'a>,
+    ) -> miette::Result<Vec<(String, String)>> {
+        let tags = position.data.as_mapping_get("tags");
 
-        let mut affected_tokens = Vec::new();
-        for (t_index, token) in affected_tokens_yaml.iter().enumerate() {
-            let token_str = helpers::get_string(
-                token,
-                &format!("root.positions.instructions[{index}].affected_tokens[{t_index}]"),
-            )?;
+        let mut vec = Vec::new();
+        if let Some(tags) = tags {
+            let tags_seq = tags
+                .data
+                .as_sequence()
+                .ok_or(self.error(tags.span, "position tags must be a sequence"))?;
 
-            let token_address = Address::from_str(token_str).map_err(|_| {
-                PositionParserError::InvalidAddressFormat {
-                    field_path: format!(
-                        "root.positions.instructions[{index}].affected_tokens[{t_index}]"
-                    ),
-                    value: token_str.to_string(),
-                }
-            })?;
+            for tag in tags_seq {
+                let tag_str = tag
+                    .data
+                    .as_str()
+                    .ok_or(self.error(tag.span, "position tag must be a string"))?;
 
-            affected_tokens.push(token_address);
+                let (tag, action) = tag_str
+                    .split_once(':')
+                    .ok_or(self.error(tag.span, "invalid tag format, expected 'tag:action'"))?;
+
+                vec.push((action.to_string(), tag.to_string()));
+            }
         }
 
-        Ok(affected_tokens)
+        Ok(vec)
     }
 
     /// Process the blueprint path.
     fn process_blueprint_path(
         &self,
-        index: usize,
         blueprint_path: &PathBuf,
-    ) -> PositionParserResult<PathBuf> {
+        span: Span,
+    ) -> miette::Result<PathBuf> {
         if blueprint_path.is_absolute() {
             return Ok(blueprint_path.clone());
         }
@@ -472,25 +554,93 @@ impl PositionParser {
 
         path = path
             .parent()
-            .ok_or(PositionParserError::InvalidPath {
-                field_path: format!("root.positions.instructions[{index}].path"),
-                value: blueprint_path.to_string_lossy().to_string(),
-            })?
+            .ok_or(self.error(span, "invalid path"))?
             .join(blueprint_path);
 
         if !path.is_file() {
-            return Err(PositionParserError::InvalidPath {
-                field_path: format!("root.positions.instructions[{index}].path"),
-                value: blueprint_path.to_string_lossy().to_string(),
-            });
+            return Err(self.error(span, "file does not exist"))?;
         }
 
-        let canonicalized = canonicalize(&path).map_err(|_| PositionParserError::InvalidPath {
-            field_path: format!("root.positions.instructions[{index}].path"),
-            value: blueprint_path.to_string_lossy().to_string(),
-        })?;
+        let canonicalized = canonicalize(&path).map_err(|err| self.error(span, err.to_string()))?;
 
         Ok(canonicalized)
+    }
+
+    /// Parses a field that can hold a raw value or a template variable
+    /// Expects `field` to hold `type` and `value` as direct children
+    /// or `value` directly if `is_affected_token` is true, expecting type Address
+    fn parse_template<'a>(
+        &self,
+        field: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
+        is_affected_token: bool,
+    ) -> miette::Result<InstructionTemplate> {
+        let (value_field, r#type) = if let Some(value_field) = field.data.as_mapping_get("value") {
+            let r#type = self.get_type(field, "type")?;
+            (value_field, r#type)
+        } else if is_affected_token {
+            let r#type = Marked::new(DynSolType::Address, field.span);
+            (field, r#type)
+        } else {
+            return Err(self.error(field.span, "unsupported field format"))?;
+        };
+
+        debug_assert!(!field.is_sequence());
+
+        // if value is not a template string
+        // try parsing as raw value and return the result
+        if !self.is_template(value_field) {
+            let value =
+                sol_types::parse_sol_value_marked(&r#type, value_field).ok_or_else(|| {
+                    self.error(value_field, "could not be parsed...")
+                        .with_second_location(r#type.span, "...into specified type")
+                })?;
+
+            return Ok(InstructionTemplate::new(InstructionTemplateEnum::Raw(
+                YamlSolValue {
+                    r#type: r#type.inner,
+                    value,
+                },
+            )));
+        }
+
+        let template = self.parse_template_str(value_field)?;
+        if !["config", "token_list"].contains(&*template.source) {
+            return Err(self.error(template.source, "unknown source"))?;
+        }
+
+        let key: &str = value_field
+            .data
+            .as_str()
+            .expect("already parsed as template");
+
+        let value = templates
+            .get_mut(key)
+            .ok_or_else(|| self.error(value_field.span, "unknown template variable"))?;
+
+        if value.as_type() != &r#type.inner {
+            return Err(self
+                .error(value_field, "has unexpected type")
+                .with_second_location(r#type.span, "expected type"))?;
+        }
+
+        // mark the template as used
+        value.is_used = true;
+
+        Ok(value.clone())
+    }
+}
+
+impl Parser for PositionParser {
+    fn named_source(&self) -> NamedSource<String> {
+        NamedSource::new(
+            self.root_path.to_string_lossy(),
+            self.source_with_includes.clone(),
+        )
+    }
+
+    fn template_regex(&self) -> &Regex {
+        &self.template_regex
     }
 }
 
@@ -500,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_process_blueprint_path() {
-        let parser = PositionParser::new(PathBuf::from("test_data/caliber.yaml"));
+        let parser = PositionParser::new(PathBuf::from("test_data/caliber.yaml"), None).unwrap();
 
         let root = parser.parse().unwrap();
 
@@ -509,9 +659,10 @@ mod tests {
 
     #[test]
     fn test_invalid_tag() {
-        let parser = PositionParser::new(PathBuf::from("test_data/caliber_invalid_tag.yaml"));
+        let parser =
+            PositionParser::new(PathBuf::from("test_data/caliber_invalid_tag.yaml"), None).unwrap();
 
-        let err = parser.parse().unwrap_err().to_string();
-        err.find("Invalid tag").unwrap();
+        // expect revert
+        parser.parse().unwrap_err();
     }
 }

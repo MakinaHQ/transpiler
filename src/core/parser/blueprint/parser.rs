@@ -10,32 +10,22 @@ use alloy::{
 };
 use indexmap::IndexMap;
 use miette::{NamedSource, miette};
-use regex::{Match, Regex};
-use saphyr::{LoadableYamlNode, MarkedYaml, Marker};
-use saphyr_parser::Span;
+use regex::Regex;
+use saphyr::{LoadableYamlNode, MarkedYaml};
 
 use crate::{
     core::parser::{
         blueprint::{
             Blueprint, BlueprintAction, BlueprintCall, BlueprintInput, BlueprintInputSlot,
             BlueprintParameter, BlueprintReservedSlot, BlueprintReturn, BlueprintTarget,
-            BlueprintValue,
-            errors::{BlueprintError, ErrorSpan, Marked},
-            types::BlueprintTemplate,
+            BlueprintValue, types::BlueprintTemplate,
         },
+        common::{Marked, Parser},
         helpers,
-        sol_types::{YamlSolValue, parse_sol_type_str, parse_sol_value_marked},
+        sol_types::{YamlSolValue, parse_sol_value_marked},
     },
     meta_sol_types::MetaDynSolType,
 };
-
-/// A parsed template string
-struct TemplateRef<'a> {
-    /// Template source: "inputs" | "constants" | "returns" | "input_slots"
-    source: Marked<&'a str>,
-    name: Marked<&'a str>,
-    _child: Option<Marked<&'a str>>,
-}
 
 pub struct BlueprintParser {
     file: PathBuf,
@@ -79,7 +69,7 @@ impl BlueprintParser {
         let protocol = self.protocol(root)?;
         let mut templates = self.inputs(root)?;
         templates.append(&mut self.constants(root)?);
-        let actions = self.actions(root, &mut templates)?;
+        let actions = self.actions(root, &templates)?;
 
         Ok(Blueprint {
             path: self.file.clone(),
@@ -162,7 +152,7 @@ impl BlueprintParser {
     fn actions<'a>(
         &self,
         root: &'a MarkedYaml<'a>,
-        templates: &mut BTreeMap<String, BlueprintTemplate>,
+        templates: &BTreeMap<String, BlueprintTemplate>,
     ) -> miette::Result<BTreeMap<&'a str, BlueprintAction>> {
         let actions = root
             .data
@@ -629,142 +619,15 @@ impl BlueprintParser {
             description,
         })
     }
+}
 
-    fn sol_value<'a>(&self, field: &'a MarkedYaml<'a>) -> miette::Result<YamlSolValue> {
-        let r#type = self.get_type(field, "type")?;
-
-        let value_field = field
-            .data
-            .as_mapping_get("value")
-            .ok_or(self.error(field.span, "'value' is missing"))?;
-
-        let value = parse_sol_value_marked(&r#type, value_field).ok_or(
-            self.error(value_field, "could not be parsed")
-                .with_second_location(r#type.span, "into specified type"),
-        )?;
-
-        Ok(YamlSolValue {
-            r#type: r#type.inner,
-            value,
-        })
-    }
-
-    /// Gets a string at key from a mapping
-    fn get_str<'a>(&self, node: &'a MarkedYaml<'a>, key: &str) -> miette::Result<Marked<&'a str>> {
-        let field = node
-            .data
-            .as_mapping_get(key)
-            .ok_or_else(|| self.error(node.span, format!("'{key}' is missing")))?;
-
-        let str = field
-            .data
-            .as_str()
-            .ok_or_else(|| self.error(field.span, "must be a string".to_string()))?;
-
-        Ok(Marked::new(str, field.span))
-    }
-
-    /// Gets an optional string from a mapping
-    fn try_get_str<'a>(
-        &self,
-        node: &'a MarkedYaml<'a>,
-        key: &str,
-    ) -> miette::Result<Option<Marked<&'a str>>> {
-        let Some(field) = node.data.as_mapping_get(key) else {
-            return Ok(None);
-        };
-
-        let str = field
-            .data
-            .as_str()
-            .ok_or_else(|| self.error(field.span, "must be a string".to_string()))?;
-
-        Ok(Some(Marked::new(str, field.span)))
-    }
-
-    /// Gets a `DynSolType` from a mapping
-    fn get_type<'a>(
-        &self,
-        node: &'a MarkedYaml<'a>,
-        key: &str,
-    ) -> miette::Result<Marked<DynSolType>> {
-        let str = self.get_str(node, key)?;
-        let r#type = parse_sol_type_str(*str).or(Err(self.error(str.span, "invalid type")))?;
-
-        Ok(Marked::new(r#type, str.span))
-    }
-
-    /// Parses a template string
-    fn parse_template_str<'a>(&self, field: &'a MarkedYaml<'a>) -> miette::Result<TemplateRef<'a>> {
-        let str = field
-            .data
-            .as_str()
-            .ok_or_else(|| self.error(field.span, "must be string"))?;
-
-        let caps = self
-            .template_regex
-            .captures(str)
-            .ok_or_else(|| self.error(field.span, "expected template string"))?;
-
-        let source = caps
-            .get(1)
-            .ok_or_else(|| self.error(field.span, "must have a source"))?;
-
-        let name = caps
-            .get(2)
-            .ok_or_else(|| self.error(field.span, "must have a name"))?;
-
-        let child = caps.get(3);
-
-        Ok(TemplateRef {
-            source: self.mark_match(source, field),
-            name: self.mark_match(name, field),
-            _child: child.map(|c| self.mark_match(c, field)),
-        })
-    }
-
-    /// Returns `true` if the field contains a string matching template field syntax
-    fn is_template<'a>(&self, field: &'a MarkedYaml<'a>) -> bool {
-        let Some(str) = field.data.as_str() else {
-            return false;
-        };
-
-        self.template_regex.is_match(str)
-    }
-
-    /// Build a [Marked] str from a regex [Match]
-    /// Assumes the match has no line breaks which should always be true given
-    /// the `template_regex`
-    fn mark_match<'a>(&self, r#match: Match<'a>, field: &'a MarkedYaml<'a>) -> Marked<&'a str> {
-        let start = Marker::new(
-            field.span.start.index() + r#match.start(),
-            field.span.start.line(),
-            field.span.start.col() + r#match.start(),
-        );
-
-        let end = Marker::new(
-            field.span.start.index() + r#match.end(),
-            field.span.start.line(),
-            field.span.start.col() + r#match.end(),
-        );
-
-        let span = Span::new(start, end);
-
-        Marked::new(r#match.as_str(), span)
-    }
-
-    /// Return [NamedSource] for this parser
+impl Parser for BlueprintParser {
     fn named_source(&self) -> NamedSource<String> {
         NamedSource::new(self.file.to_string_lossy(), self.source.clone())
     }
 
-    /// Helper method to generate a [BlueprintError] referencing this parsers source
-    fn error<S, Str>(&self, span: S, msg: Str) -> BlueprintError
-    where
-        S: Into<ErrorSpan>,
-        Str: Into<String>,
-    {
-        BlueprintError::new(self.named_source(), span, msg)
+    fn template_regex(&self) -> &Regex {
+        &self.template_regex
     }
 }
 
