@@ -69,8 +69,6 @@ pub enum InstructionTemplateEnum {
     Config(YamlSolValue),
     Raw(YamlSolValue),
     TokenInfo(TokenInfo),
-    /// Position-level variables defined in the `vars` field of a position.
-    /// Type is inferred from the instruction where the variable is used.
     PositionVar(String),
 }
 
@@ -95,8 +93,6 @@ impl InstructionTemplate {
         }
     }
 
-    /// Returns the type of the template value.
-    /// Panics for `PositionVar` since its type is inferred from usage context.
     pub fn as_type(&self) -> &DynSolType {
         match &self.template {
             InstructionTemplateEnum::Raw(raw) => &raw.r#type,
@@ -108,7 +104,6 @@ impl InstructionTemplate {
         }
     }
 
-    /// Returns true if this template has a known type (not a position var).
     pub fn has_known_type(&self) -> bool {
         !matches!(self.template, InstructionTemplateEnum::PositionVar(_))
     }

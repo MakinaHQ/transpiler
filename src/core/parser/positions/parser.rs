@@ -170,12 +170,9 @@ impl PositionParser {
 
         let mut vec = Vec::new();
         for position in positions_seq {
-            // Parse position-level variables and add them to the template context
-            // Pass templates so position vars can reference token_list or config variables
             let position_vars = self.position_vars(position, templates)?;
             let position_var_keys: Vec<String> = position_vars.keys().cloned().collect();
 
-            // Inject position vars into templates for this position
             templates.extend(position_vars);
 
             let instructions = self.instructions(position, templates)?;
@@ -196,13 +193,6 @@ impl PositionParser {
         Ok(vec)
     }
 
-    /// Parse position-level variables from the `vars` field.
-    /// Type is inferred from the instruction where the variable is used.
-    ///
-    /// Supports:
-    /// - Raw values: `token_address: "0x..."`
-    /// - Token list references: `token_address: "${token_list.mainnet.USDC}"`
-    ///
     /// Example:
     /// ```yaml
     /// vars:
@@ -237,9 +227,7 @@ impl PositionParser {
 
             let template_key = format!("${{position.{name}}}");
 
-            // Check if this is a template variable reference (e.g., ${token_list.mainnet.USDC})
             if self.is_template(value) {
-                // Look up the template (e.g., token_list or config)
                 if let Some(template) = templates.get_mut(raw_str) {
                     // Mark the original template as used (for tracking in root.tokens)
                     template.is_used = true;
@@ -412,7 +400,6 @@ impl PositionParser {
             .as_str()
             .ok_or(self.error(label.span, "instruction label must be a string"))?;
 
-        // Check if the label is a template variable
         if self.is_template(label) {
             let template = self.parse_template_str(label)?;
             if !["config", "token_list", "position"].contains(&*template.source) {
@@ -423,10 +410,8 @@ impl PositionParser {
                 .get_mut(label_str)
                 .ok_or_else(|| self.error(label.span, "unknown template variable"))?;
 
-            // Mark the template as used
             value.is_used = true;
 
-            // Extract the string value from the template
             let resolved = match &value.template {
                 InstructionTemplateEnum::Config(config) => {
                     config.value.as_str().ok_or_else(|| {
@@ -461,7 +446,6 @@ impl PositionParser {
             .ok_or(self.error(input.span, "instruction input type is required"))?
             .span;
 
-        // Ensure it is a scalar type
         if parsed.as_type().is_dynamic() {
             return Err(self.error(type_span, "dynamic types not supported"))?;
         }
@@ -755,7 +739,6 @@ impl PositionParser {
                     },
                 )?;
 
-            // Mark as used
             value.is_used = true;
 
             // Return as Raw since we've now resolved the type
