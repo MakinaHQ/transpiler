@@ -23,10 +23,7 @@ pub trait MetaTypeDef {
 
     /// Create a DynSolValue from a map of field names to values.
     /// Returns an error if required fields are missing.
-    fn create_value(
-        &self,
-        values: HashMap<String, DynSolValue>,
-    ) -> Result<DynSolValue, String> {
+    fn create_value(&self, values: HashMap<String, DynSolValue>) -> Result<DynSolValue, String> {
         let props = self.properties();
         let mut tuple_values = Vec::with_capacity(props.len());
         let mut prop_names = Vec::with_capacity(props.len());
@@ -34,7 +31,7 @@ pub trait MetaTypeDef {
         for (prop_name, _prop_type) in &props {
             let value = values
                 .get(prop_name)
-                .ok_or_else(|| format!("Missing field: {}", prop_name))?;
+                .ok_or_else(|| format!("Missing field: {prop_name}"))?;
             prop_names.push(prop_name.clone());
             tuple_values.push(value.clone());
         }
@@ -60,7 +57,7 @@ pub trait MetaTypeDef {
         for (prop_name, prop_type) in &props {
             let value = values
                 .get(prop_name)
-                .ok_or_else(|| format!("Missing field: {}", prop_name))?;
+                .ok_or_else(|| format!("Missing field: {prop_name}"))?;
 
             let encoded = if prop_type.is_dynamic() {
                 // Dynamic types (bytes, string) have a 32-byte length prefix we need to skip
@@ -475,10 +472,7 @@ mod tests {
         use alloy::primitives::{Address, U256};
 
         let mut values = HashMap::new();
-        values.insert(
-            "guy".to_string(),
-            DynSolValue::Address(Address::ZERO),
-        );
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
         values.insert(
             "amount".to_string(),
             DynSolValue::Uint(U256::from(1000), 256),
@@ -487,7 +481,11 @@ mod tests {
         let result = ApproveDataDef.create_value(values).unwrap();
 
         match result {
-            DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            DynSolValue::CustomStruct {
+                name,
+                prop_names,
+                tuple,
+            } => {
                 assert_eq!(name, "ApproveData");
                 assert_eq!(prop_names, vec!["guy", "amount"]);
                 assert_eq!(tuple.len(), 2);
@@ -501,10 +499,7 @@ mod tests {
         use alloy::primitives::Address;
 
         let mut values = HashMap::new();
-        values.insert(
-            "guy".to_string(),
-            DynSolValue::Address(Address::ZERO),
-        );
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
         // Missing "amount" field
 
         let result = ApproveDataDef.create_value(values);
@@ -519,10 +514,7 @@ mod tests {
         let meta_type = MetaDynSolType::ApproveData(ApproveDataDef);
 
         let mut values = HashMap::new();
-        values.insert(
-            "guy".to_string(),
-            DynSolValue::Address(Address::ZERO),
-        );
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
         values.insert(
             "amount".to_string(),
             DynSolValue::Uint(U256::from(500), 256),
@@ -543,10 +535,7 @@ mod tests {
         use alloy::primitives::{Address, U256};
 
         let mut values = HashMap::new();
-        values.insert(
-            "tokenIn".to_string(),
-            DynSolValue::Address(Address::ZERO),
-        );
+        values.insert("tokenIn".to_string(), DynSolValue::Address(Address::ZERO));
         values.insert(
             "amountToDeposit".to_string(),
             DynSolValue::Uint(U256::from(1000), 256),
@@ -563,7 +552,11 @@ mod tests {
         let result = FxSaveDataDef.create_value(values).unwrap();
 
         match result {
-            DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            DynSolValue::CustomStruct {
+                name,
+                prop_names,
+                tuple,
+            } => {
                 assert_eq!(name, "FxSaveData");
                 assert_eq!(prop_names.len(), 4);
                 assert_eq!(tuple.len(), 4);

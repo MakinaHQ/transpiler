@@ -76,7 +76,7 @@ fn transpile(
     let blueprint = match BlueprintParser::new(&inst.definition.blueprint_path)?.parse() {
         Ok(blueprint) => blueprint,
         Err(err) => {
-            eprintln!("{:?}", err);
+            eprintln!("{err:?}");
             return Err(miette!("aborting"));
         }
     };
@@ -164,7 +164,7 @@ fn transpile_target(target: &BlueprintTarget, definition: &InstructionDefinition
                 .inputs
                 .iter()
                 .find(|(label, _)| label == &name)
-                .expect(&format!("could not find input {name}"));
+                .unwrap_or_else(|| panic!("could not find input {name}"));
 
             input.value.as_address().expect("target must be address")
         }
@@ -211,7 +211,7 @@ fn transpile_parameter(
                 .inputs
                 .iter()
                 .find(|(label, _)| label == &name)
-                .expect(&format!("could not find input {name}"));
+                .unwrap_or_else(|| panic!("could not find input {name}"));
 
             let encoded: Bytes = match input.r#type {
                 DynSolType::String => input
