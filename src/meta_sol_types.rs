@@ -635,4 +635,96 @@ mod tests {
             _ => panic!("Expected CustomStruct"),
         }
     }
+
+    #[test]
+    fn test_encode_values_static_types() {
+        use alloy::primitives::{Address, U256};
+
+        let mut values = HashMap::new();
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "amount".to_string(),
+            DynSolValue::Uint(U256::from(1000), 256),
+        );
+
+        let result = ApproveDataDef.encode_values(values).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("guy"));
+        assert!(result.contains_key("amount"));
+        // Static types (address, uint256) are 32 bytes (ABI word size)
+        assert_eq!(result.get("guy").unwrap().len(), 32);
+        assert_eq!(result.get("amount").unwrap().len(), 32);
+    }
+
+    #[test]
+    fn test_encode_values_dynamic_types() {
+        use alloy::primitives::U256;
+
+        let mut values = HashMap::new();
+        values.insert(
+            "minPtOut".to_string(),
+            DynSolValue::Uint(U256::from(100), 256),
+        );
+        values.insert(
+            "guessPtOut".to_string(),
+            DynSolValue::Bytes(vec![0x01, 0x02, 0x03]),
+        );
+        values.insert("input".to_string(), DynSolValue::Bytes(vec![0xaa, 0xbb]));
+        values.insert("limit".to_string(), DynSolValue::Bytes(vec![]));
+
+        let result = PendleSwapDataDef.encode_values(values).unwrap();
+
+        assert_eq!(result.len(), 4);
+
+        // Static type (uint256) should be 32 bytes
+        assert_eq!(result.get("minPtOut").unwrap().len(), 32);
+
+        // Dynamic types should have offset stripped (first 32 bytes removed)
+        // The remaining bytes include: length (32 bytes) + padded data
+        // For 3 bytes of data: 32 (length) + 32 (padded data) = 64 bytes
+        let guess_bytes = result.get("guessPtOut").unwrap();
+        assert_eq!(guess_bytes.len(), 64);
+
+        // For 2 bytes of data: 32 (length) + 32 (padded data) = 64 bytes
+        let input_bytes = result.get("input").unwrap();
+        assert_eq!(input_bytes.len(), 64);
+
+        // For 0 bytes of data: 32 (length) + 0 (no data) = 32 bytes
+        let limit_bytes = result.get("limit").unwrap();
+        assert_eq!(limit_bytes.len(), 32);
+    }
+
+    #[test]
+    fn test_encode_values_missing_field() {
+        use alloy::primitives::Address;
+
+        let mut values = HashMap::new();
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
+        // Missing "amount" field
+
+        let result = ApproveDataDef.encode_values(values);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Missing field: amount");
+    }
+
+    #[test]
+    fn test_encode_values_via_enum() {
+        use alloy::primitives::{Address, U256};
+
+        let meta_type = MetaDynSolType::ApproveData(ApproveDataDef);
+
+        let mut values = HashMap::new();
+        values.insert("guy".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "amount".to_string(),
+            DynSolValue::Uint(U256::from(500), 256),
+        );
+
+        let result = meta_type.encode_values(values).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("guy"));
+        assert!(result.contains_key("amount"));
+    }
 }
