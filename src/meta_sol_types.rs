@@ -268,6 +268,14 @@ define_meta_types! {
             ("amountToDeposit", DynSolType::Uint(256)),
         ]
     },
+    KingClaimData(KingClaimDataDef) {
+        properties: [
+            ("account", DynSolType::Address),
+            ("cumulative_amount", DynSolType::Uint(256)),
+            ("expected_merkle_root", DynSolType::FixedBytes(32)),
+            ("merkle_proof", DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))),
+        ]
+    },
 }
 
 #[cfg(test)]
@@ -281,6 +289,7 @@ mod tests {
         assert!(MetaDynSolType::from_name("ApproveData").is_some());
         assert!(MetaDynSolType::from_name("MerklClaimData").is_some());
         assert!(MetaDynSolType::from_name("FxSaveData").is_some());
+        assert!(MetaDynSolType::from_name("KingClaimData").is_some());
         assert!(MetaDynSolType::from_name("NonExistent").is_none());
     }
 
@@ -302,6 +311,10 @@ mod tests {
         assert_eq!(
             MetaDynSolType::FxSaveData(FxSaveDataDef).name(),
             "FxSaveData"
+        );
+        assert_eq!(
+            MetaDynSolType::KingClaimData(KingClaimDataDef).name(),
+            "KingClaimData"
         );
     }
 
@@ -325,6 +338,7 @@ mod tests {
         assert_eq!(ApproveDataDef.properties().len(), 2);
         assert_eq!(MerklClaimDataDef.properties().len(), 4);
         assert_eq!(FxSaveDataDef.properties().len(), 4);
+        assert_eq!(KingClaimDataDef.properties().len(), 4);
     }
 
     #[test]
@@ -464,6 +478,7 @@ mod tests {
         assert_eq!(ApproveDataDef.name(), "ApproveData");
         assert_eq!(MerklClaimDataDef.name(), "MerklClaimData");
         assert_eq!(FxSaveDataDef.name(), "FxSaveData");
+        assert_eq!(KingClaimDataDef.name(), "KingClaimData");
     }
 
     #[test]
@@ -557,6 +572,63 @@ mod tests {
                 tuple,
             } => {
                 assert_eq!(name, "FxSaveData");
+                assert_eq!(prop_names.len(), 4);
+                assert_eq!(tuple.len(), 4);
+            }
+            _ => panic!("Expected CustomStruct"),
+        }
+    }
+
+    #[test]
+    fn test_king_claim_data_from_str() {
+        let result: Result<MetaDynSolType, _> = "KingClaimData".parse();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name(), "KingClaimData");
+    }
+
+    #[test]
+    fn test_king_claim_data_properties() {
+        let def = KingClaimDataDef;
+        let properties = def.properties();
+
+        assert_eq!(properties.len(), 4);
+
+        // Check property names
+        let prop_names: Vec<&str> = properties.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(prop_names.contains(&"account"));
+        assert!(prop_names.contains(&"cumulative_amount"));
+        assert!(prop_names.contains(&"expected_merkle_root"));
+        assert!(prop_names.contains(&"merkle_proof"));
+
+        // Check property types
+        let prop_map = def.property_map();
+        assert_eq!(prop_map.get("account"), Some(&DynSolType::Address));
+        assert_eq!(
+            prop_map.get("cumulative_amount"),
+            Some(&DynSolType::Uint(256))
+        );
+        assert_eq!(
+            prop_map.get("expected_merkle_root"),
+            Some(&DynSolType::FixedBytes(32))
+        );
+        assert_eq!(
+            prop_map.get("merkle_proof"),
+            Some(&DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+        );
+    }
+
+    #[test]
+    fn test_king_claim_data_to_dyn_sol_type() {
+        let def = KingClaimDataDef;
+        let sol_type = def.to_dyn_sol_type();
+
+        match sol_type {
+            DynSolType::CustomStruct {
+                name,
+                prop_names,
+                tuple,
+            } => {
+                assert_eq!(name, "KingClaimData");
                 assert_eq!(prop_names.len(), 4);
                 assert_eq!(tuple.len(), 4);
             }
