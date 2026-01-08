@@ -58,7 +58,7 @@ impl From<DynSolType> for InputSlotType {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RootfileInputSlot {
     pub index: usize,
     pub name: String,
@@ -66,7 +66,7 @@ pub struct RootfileInputSlot {
     pub meta_type: Option<MetaTypeData>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MetaTypeData {
     pub r#type: String,
     pub name: String,
@@ -96,7 +96,7 @@ impl FromStr for InstructionType {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MakinaInstruction {
     #[serde(with = "alloy::serde::displayfromstr")]
     pub position_id: U256,
@@ -117,7 +117,7 @@ pub struct MakinaInstruction {
     pub inputs_slots: Vec<RootfileInputSlot>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NamedMakinaInstruction {
     pub inner: MakinaInstruction,
     pub instruction_name: String,
@@ -166,7 +166,7 @@ impl MakinaInstruction {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rootfile {
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub tokens: BTreeMap<String, TokenInfo>,
@@ -252,5 +252,19 @@ impl Rootfile {
     /// returns root of this files merkletree
     pub fn root(&self) -> FixedBytes<32> {
         *self.merkletree().get_root()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::types::Rootfile;
+
+    #[test]
+    fn test_roundtrip_serde() {
+        let empty = "[instructions]\n";
+
+        let deserde: Rootfile = toml::from_str(empty).unwrap();
+        assert_eq!(deserde, Rootfile::default());
+        assert_eq!(toml::to_string(&deserde).unwrap(), empty);
     }
 }
