@@ -168,6 +168,7 @@ impl MakinaInstruction {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rootfile {
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub tokens: BTreeMap<String, TokenInfo>,
     pub instructions: BTreeMap<String, BTreeMap<String, BTreeMap<String, MakinaInstruction>>>,
 }
