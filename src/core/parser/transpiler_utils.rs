@@ -113,8 +113,147 @@ impl TranspilerUtilKind {
 
     /// Returns a comma-separated list of all available function names.
     pub fn available_functions_list() -> String {
-        "keccak256".to_string()
+        Self::all()
+            .iter()
+            .map(|k| k.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
+
+    /// Returns all available utility function kinds.
+    pub const fn all() -> &'static [Self] {
+        &[Self::Keccak256]
+    }
+
+    /// Returns the documentation for this utility function.
+    pub const fn doc(&self) -> TranspilerUtilDoc {
+        match self {
+            Self::Keccak256 => TranspilerUtilDoc {
+                name: "keccak256",
+                description: "Computes the Keccak-256 hash of the input string. \
+                    This is the same hash function used by Solidity's keccak256().",
+                input_type: "string",
+                input_description: "An identifier-like string (alphanumeric, dots, underscores, hyphens). \
+                    No leading/trailing dots, no consecutive dots.",
+                output_type: TranspilerUtilOutputType::Bytes32,
+                examples: &[
+                    TranspilerUtilExample {
+                        yaml: r#"slot:
+  type: "bytes32"
+  value: "${keccak256(makina.mainnet.vault.position)}""#,
+                        description: "Compute a storage slot identifier",
+                    },
+                    TranspilerUtilExample {
+                        yaml: r#"key:
+  type: "bytes32"
+  value: "${keccak256(\"my.custom.key\")}""#,
+                        description: "Using quoted argument for clarity",
+                    },
+                ],
+            },
+        }
+    }
+}
+
+/// Documentation for a transpiler utility function.
+///
+/// This struct provides all the metadata needed to document a utility function,
+/// including its name, description, input/output types, and usage examples.
+#[derive(Debug, Clone, Copy)]
+pub struct TranspilerUtilDoc {
+    /// The function name as used in YAML.
+    pub name: &'static str,
+    /// A description of what the function does.
+    pub description: &'static str,
+    /// The type of input the function expects (human-readable).
+    pub input_type: &'static str,
+    /// Description of the input format and constraints.
+    pub input_description: &'static str,
+    /// The output type of the function.
+    pub output_type: TranspilerUtilOutputType,
+    /// Usage examples.
+    pub examples: &'static [TranspilerUtilExample],
+}
+
+impl TranspilerUtilDoc {
+    /// Format the documentation as a human-readable string.
+    pub fn format(&self) -> String {
+        let mut output = String::new();
+
+        output.push_str(&format!("## ${{{0}(input)}}\n\n", self.name));
+        output.push_str(&format!("{}\n\n", self.description));
+        output.push_str("### Signature\n\n");
+        output.push_str(&format!(
+            "- **Input:** `{}` - {}\n",
+            self.input_type, self.input_description
+        ));
+        output.push_str(&format!(
+            "- **Output:** `{}`\n\n",
+            self.output_type.name()
+        ));
+
+        if !self.examples.is_empty() {
+            output.push_str("### Examples\n\n");
+            for example in self.examples {
+                output.push_str(&format!("**{}**\n\n", example.description));
+                output.push_str(&format!("```yaml\n{}\n```\n\n", example.yaml));
+            }
+        }
+
+        output
+    }
+
+    /// Format the documentation as a compact single-line summary.
+    pub fn format_short(&self) -> String {
+        format!(
+            "${{{name}(input)}} -> {output}  |  {desc}",
+            name = self.name,
+            output = self.output_type.name(),
+            desc = self.description.lines().next().unwrap_or("")
+        )
+    }
+}
+
+/// An example of how to use a transpiler utility function.
+#[derive(Debug, Clone, Copy)]
+pub struct TranspilerUtilExample {
+    /// The YAML code showing the usage.
+    pub yaml: &'static str,
+    /// A description of what this example demonstrates.
+    pub description: &'static str,
+}
+
+/// Get all available utility function documentation.
+pub fn all_utils_docs() -> Vec<TranspilerUtilDoc> {
+    TranspilerUtilKind::all().iter().map(|k| k.doc()).collect()
+}
+
+/// Format all utility function documentation as a single string.
+pub fn format_all_utils_docs() -> String {
+    let mut output = String::new();
+    output.push_str("# Transpiler Utility Functions\n\n");
+    output.push_str("These functions are evaluated during transpilation (not at runtime).\n");
+    output.push_str("Use them in YAML with the syntax: `${function_name(args)}`\n\n");
+    output.push_str("---\n\n");
+
+    for doc in all_utils_docs() {
+        output.push_str(&doc.format());
+        output.push_str("---\n\n");
+    }
+
+    output
+}
+
+/// Format a compact list of all utility functions.
+pub fn format_utils_list() -> String {
+    let mut output = String::new();
+    output.push_str("Available transpiler utility functions:\n\n");
+
+    for doc in all_utils_docs() {
+        output.push_str(&format!("  {}\n", doc.format_short()));
+    }
+
+    output
 }
 
 /// The native output type of a transpiler utility function.

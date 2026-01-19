@@ -9,6 +9,7 @@ pub mod token_list;
 pub mod types;
 
 use core::parser::positions::parser::PositionParser;
+use core::parser::transpiler_utils;
 use core::transpiler::get_rootfile_from_positions;
 use std::path::PathBuf;
 
@@ -22,6 +23,16 @@ use crate::errors::Result;
 use crate::types::Rootfile;
 
 pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
+    // Handle commands that don't require input files first
+    if let Command::ListUtils { verbose } = cli.command() {
+        if verbose {
+            print!("{}", transpiler_utils::format_all_utils_docs());
+        } else {
+            print!("{}", transpiler_utils::format_utils_list());
+        }
+        return Ok(());
+    }
+
     if !cli.input_file.is_file() {
         return Err(Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -62,6 +73,10 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         Command::Root => {
             println!("calculated root: {}", rootfile.root());
             Ok(())
+        }
+        Command::ListUtils { .. } => {
+            // Already handled at the start of the function
+            unreachable!()
         }
     }
 }
