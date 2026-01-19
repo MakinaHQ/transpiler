@@ -187,10 +187,7 @@ impl TranspilerUtilDoc {
             "- **Input:** `{}` - {}\n",
             self.input_type, self.input_description
         ));
-        output.push_str(&format!(
-            "- **Output:** `{}`\n\n",
-            self.output_type.name()
-        ));
+        output.push_str(&format!("- **Output:** `{}`\n\n", self.output_type.name()));
 
         if !self.examples.is_empty() {
             output.push_str("### Examples\n\n");
