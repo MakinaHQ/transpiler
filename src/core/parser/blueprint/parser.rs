@@ -598,14 +598,11 @@ impl BlueprintParser {
     ) -> miette::Result<BlueprintInput> {
         let r#type = self.get_type(field, "type")?;
 
-        // https://github.com/MakinaHQ/transpiler/blob/4632a90810dc0598077e4e7c8eb64c1a0bcba428/src/core/parser/blueprint/parser.rs#L292-L301
-        //
-        // this does not match the original implementation (linked above)
-        // which i believe is broken because Bytes & String are not a scalar type
-        // but allowed above
-        //
-        // we want to allow custom structs because they are used for the dynamic types
-        if r#type.is_dynamic() && !r#type.has_custom_struct() {
+        // Reject complex dynamic types (arrays, tuples) but allow:
+        // - Bytes and String (dynamic but valid as inputs)
+        // - CustomStructs (used for meta types like SwapData)
+        let is_allowed_dynamic = matches!(r#type.inner, DynSolType::Bytes | DynSolType::String);
+        if r#type.is_dynamic() && !r#type.has_custom_struct() && !is_allowed_dynamic {
             return Err(self.error(r#type.span, "must be scalar type"))?;
         }
 
