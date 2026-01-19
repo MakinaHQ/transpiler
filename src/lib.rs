@@ -23,16 +23,39 @@ use crate::errors::Result;
 use crate::types::Rootfile;
 
 pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
-    // Handle commands that don't require input files first
-    if let Command::ListUtils { verbose } = cli.command() {
-        if verbose {
-            print!("{}", transpiler_utils::format_all_utils_docs());
-        } else {
-            print!("{}", transpiler_utils::format_utils_list());
+    match cli.command() {
+        Command::ListUtils { verbose } => {
+            if verbose {
+                print!("{}", transpiler_utils::format_all_utils_docs());
+            } else {
+                print!("{}", transpiler_utils::format_utils_list());
+            }
+            Ok(())
         }
-        return Ok(());
+        Command::Transpile => {
+            let (_, rootfile) = parse_input_files(cli)?;
+            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
+        }
+        Command::Check { github_errors } => {
+            let (parsed, _) = parse_input_files(cli)?;
+            let check = Check::new(cli.input_file.clone(), parsed, github_errors);
+            check
+                .all_addresses_verified()
+                .await
+                .map_err(|err| miette!("{}", err))
+        }
+        Command::Root => {
+            let (_, rootfile) = parse_input_files(cli)?;
+            println!("calculated root: {}", rootfile.root());
+            Ok(())
+        }
     }
+}
 
+/// Parse and validate input files, returning the parsed positions and rootfile.
+fn parse_input_files(
+    cli: &cli::Cli,
+) -> miette::Result<(core::parser::positions::types::Root, Rootfile)> {
     if !cli.input_file.is_file() {
         return Err(Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -41,7 +64,6 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .map_err(|err| miette!("{}", err));
     }
 
-    // verify the token list path exists, if provided
     if let Some(token_list_path) = &cli.token_list
         && !token_list_path.is_file()
     {
@@ -59,26 +81,7 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
     let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
         .map_err(|err| miette!("{:?}", err))?;
 
-    match cli.command() {
-        Command::Transpile => {
-            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
-        }
-        Command::Check { github_errors } => {
-            let check = Check::new(cli.input_file.clone(), parsed, github_errors);
-            check
-                .all_addresses_verified()
-                .await
-                .map_err(|err| miette!("{}", err))
-        }
-        Command::Root => {
-            println!("calculated root: {}", rootfile.root());
-            Ok(())
-        }
-        Command::ListUtils { .. } => {
-            // Already handled at the start of the function
-            unreachable!()
-        }
-    }
+    Ok((parsed, rootfile))
 }
 
 /// Writes formatted rootfile to path
