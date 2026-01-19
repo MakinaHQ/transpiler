@@ -5,6 +5,7 @@ pub mod helpers;
 pub mod include;
 pub mod positions;
 pub mod sol_types;
+pub mod transpiler_utils;
 
 // re-export the include module
 pub use include::YamlInclude;
