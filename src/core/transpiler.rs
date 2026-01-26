@@ -154,6 +154,8 @@ fn transpile(
         group_id,
         instruction_type: inst.instruction_type,
         affected_tokens: inst.affected_tokens.clone(),
+        // TODO: use actual position tokens
+        position_tokens: vec![],
         commands: commands.iter().map(|c| FixedBytes::from_slice(c)).collect(),
         state,
         bitmap,
