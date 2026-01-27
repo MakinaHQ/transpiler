@@ -191,7 +191,7 @@ impl PositionParser {
                 .filter(|inst| inst.instruction_type == InstructionType::Accounting)
                 .count()
                 != 1
-                || is_harvest_only
+                && !is_harvest_only
             {
                 return Err(self
                     .error(
