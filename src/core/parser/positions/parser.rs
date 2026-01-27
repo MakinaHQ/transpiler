@@ -56,7 +56,9 @@ impl PositionParser {
         // Load the source position file, and add instructions using `!include`.
         let includes = YamlInclude::new(root_path.clone())
             .map_err(|err| miette!("could not load includes: {}", err))?;
-        let includes_fmt = format!("{includes}"); // This will parse the includes and output the final content.
+
+        // This will parse the includes and output the final content.
+        let includes_fmt = format!("{includes}");
         let content = helpers::replace_builtins(&includes_fmt)
             .map_err(|err| miette!("could not replace builtins: {}", err))?;
 
@@ -152,7 +154,6 @@ impl PositionParser {
 
         Ok(map)
     }
-
     fn positions<'a>(
         &self,
         root: &'a MarkedYaml<'a>,
@@ -175,10 +176,35 @@ impl PositionParser {
 
             templates.extend(position_vars);
 
+            let position_tokens = self.position_tokens(position)?;
             let instructions = self.instructions(position, templates)?;
+
+            // if there are only harvest instructions there might be no accounting
+            let is_harvest_only = instructions.len()
+                == instructions
+                    .iter()
+                    .filter(|inst| inst.instruction_type == InstructionType::Harvest)
+                    .count();
+
+            if instructions
+                .iter()
+                .filter(|inst| inst.instruction_type == InstructionType::Accounting)
+                .count()
+                != 1
+                && !is_harvest_only
+            {
+                return Err(self
+                    .error(
+                        position.span,
+                        "position must have exactly one accounting instruction",
+                    )
+                    .into());
+            }
+
             vec.push(Position {
                 id: self.position_id(position)?,
                 group_id: self.position_group_id(position)?,
+                position_tokens,
                 description: self.position_description(position)?,
                 instructions,
                 global_tags: self.position_tags(position)?,
@@ -191,6 +217,33 @@ impl PositionParser {
             }
         }
         Ok(vec)
+    }
+
+    fn position_tokens<'a>(&self, position: &'a MarkedYaml<'a>) -> miette::Result<Vec<Address>> {
+        let Some(position_tokens) = position.data.as_mapping_get("position_tokens") else {
+            return Ok(Vec::new());
+        };
+
+        let sequence = position_tokens
+            .data
+            .as_sequence()
+            .ok_or(self.error(position_tokens.span, "position_tokens must be a sequence"))?;
+
+        let mut parsed_position_tokens = Vec::new();
+        for value in sequence {
+            let string = value
+                .data
+                .as_str()
+                .ok_or(self.error(value.span, "position tokens must be type string"))?;
+
+            let parsed: Address = string
+                .parse()
+                .map_err(|_err| self.error(value.span, "position token must be valid address"))?;
+
+            parsed_position_tokens.push(parsed);
+        }
+
+        Ok(parsed_position_tokens)
     }
 
     /// Example:
@@ -786,6 +839,8 @@ impl Parser for PositionParser {
 mod tests {
     use alloy::primitives::address;
 
+    use crate::core::parser::common::ParserError;
+
     use super::*;
 
     #[test]
@@ -913,6 +968,30 @@ mod tests {
             pos1_token.value.as_address().unwrap(),
             pos2_token.value.as_address().unwrap()
         );
+    }
+
+    #[test]
+    fn test_position_with_two_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_two_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+        )
+        .unwrap();
+
+        let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
+        assert!(err.msg().contains("exactly one accounting instruction"));
+    }
+
+    #[test]
+    fn test_position_without_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_without_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+        )
+        .unwrap();
+
+        let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
+        assert!(err.msg().contains("exactly one accounting instruction"));
     }
 
     #[test]

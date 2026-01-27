@@ -28,6 +28,7 @@ pub struct SolValue {
 pub struct Position {
     pub id: U256,
     pub group_id: U256,
+    pub position_tokens: Vec<Address>,
     pub description: Option<String>,
     pub instructions: Vec<Instruction>,
     pub global_tags: Vec<(String, String)>,
