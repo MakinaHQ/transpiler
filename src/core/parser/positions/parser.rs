@@ -178,11 +178,20 @@ impl PositionParser {
 
             let position_tokens = self.position_tokens(position)?;
             let instructions = self.instructions(position, templates)?;
+
+            // if there are only harvest instructions there might be no accounting
+            let is_harvest_only = instructions.len()
+                == instructions
+                    .iter()
+                    .filter(|inst| inst.instruction_type == InstructionType::Harvest)
+                    .count();
+
             if instructions
                 .iter()
                 .filter(|inst| inst.instruction_type == InstructionType::Accounting)
                 .count()
                 != 1
+                || is_harvest_only
             {
                 return Err(self
                     .error(
