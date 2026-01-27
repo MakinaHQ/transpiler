@@ -12,6 +12,7 @@ use weiroll::{
     cmds::{CommandFlags, Literal, ReturnValue, Value},
 };
 
+use crate::types::InstructionType;
 use crate::{
     core::parser::{
         blueprint::{
@@ -46,8 +47,14 @@ pub fn create_rootfile_instructions(
     let mut instructions = Vec::new();
 
     for inst in &position.instructions {
+        let position_tokens = if inst.instruction_type == InstructionType::Accounting {
+            &position.position_tokens
+        } else {
+            &vec![]
+        };
+
         let (protocol_name, instruction_name, token_name, mut inner) =
-            transpile(inst, position.id, position.group_id)?;
+            transpile(inst, position.id, position.group_id, position_tokens)?;
 
         inner.description = position.description.clone();
         inner.tags = position.get_tags(&instruction_name);
@@ -76,6 +83,7 @@ fn transpile(
     inst: &Instruction,
     id: U256,
     group_id: U256,
+    position_tokens: &[Address],
 ) -> miette::Result<(String, String, String, MakinaInstruction)> {
     // get the blueprint of the instruction
     // we exit early and print the error to get nice diagnostics
@@ -154,8 +162,7 @@ fn transpile(
         group_id,
         instruction_type: inst.instruction_type,
         affected_tokens: inst.affected_tokens.clone(),
-        // TODO: use actual position tokens
-        position_tokens: vec![],
+        position_tokens: Vec::from(position_tokens),
         commands: commands.iter().map(|c| FixedBytes::from_slice(c)).collect(),
         state,
         bitmap,
@@ -480,7 +487,8 @@ mod test {
 
         let id = U256::from(123);
         let group_id = U256::from(1);
-        let (protocol, name, label, m) = transpile(&inst, id, group_id).unwrap();
+        let position_tokens = vec![];
+        let (protocol, name, label, m) = transpile(&inst, id, group_id, &position_tokens).unwrap();
 
         assert_eq!(protocol, "aavev3");
         assert_eq!(name, "deposit");
@@ -561,7 +569,8 @@ mod test {
 
         let id = U256::from(123);
         let group_id = U256::from(1);
-        let (protocol, name, label, m) = transpile(&inst, id, group_id).unwrap();
+        let position_tokens = vec![];
+        let (protocol, name, label, m) = transpile(&inst, id, group_id, &position_tokens).unwrap();
 
         assert_eq!(protocol, "aavev3");
         assert_eq!(name, "account");
@@ -634,6 +643,7 @@ mod test {
         let pos = Position {
             id: U256::ZERO,
             group_id: U256::ZERO,
+            position_tokens: vec![],
             description: None,
             instructions: vec![inst],
             global_tags: vec![("deposit".to_string(), "test_tag".to_string())],
@@ -684,6 +694,7 @@ mod test {
         let pos = Position {
             id: U256::ZERO,
             group_id: U256::ZERO,
+            position_tokens: vec![],
             description: None,
             instructions: vec![inst],
             global_tags: vec![("unknown".to_string(), "test_tag".to_string())],
@@ -691,5 +702,101 @@ mod test {
 
         let err = create_rootfile_instructions(&pos).unwrap_err().to_string();
         err.find("no action with name").unwrap();
+    }
+
+    #[test]
+    fn test_position_tokens_in_accounting_instruction() {
+        // Create an Accounting instruction (similar to test_aave_account_weth)
+        let mut accounting_inputs = HashMap::new();
+        let aave_token = SolValue {
+            r#type: DynSolType::Address,
+            value: address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8").into(),
+            description: None,
+        };
+        let account = SolValue {
+            r#type: DynSolType::Address,
+            value: address!("0x158f44107cecf59e281a9e9f0a5680ea2867a5cd").into(),
+            description: None,
+        };
+        accounting_inputs.insert("aave_token".into(), aave_token);
+        accounting_inputs.insert("account".into(), account);
+
+        let accounting_inst = Instruction {
+            description: None,
+            is_debt: false,
+            instruction_type: InstructionType::Accounting,
+            affected_tokens: vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")],
+            definition: InstructionDefinition {
+                inputs: accounting_inputs,
+                label: "weth".into(),
+                override_name: None,
+                name: "account".into(),
+                blueprint_path: "test_data/blueprints/account.yaml".parse().unwrap(),
+            },
+        };
+
+        // Create a Management instruction (should NOT receive position tokens)
+        let mut management_inputs = HashMap::new();
+        let on_behalf_of = SolValue {
+            r#type: DynSolType::Address,
+            value: address!("0x158f44107cecf59e281a9e9f0a5680ea2867a5cd").into(),
+            description: None,
+        };
+        let token = SolValue {
+            r#type: DynSolType::Address,
+            value: address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").into(),
+            description: None,
+        };
+        management_inputs.insert("on_behalf_of".into(), on_behalf_of);
+        management_inputs.insert("token".into(), token);
+
+        let management_inst = Instruction {
+            description: None,
+            is_debt: false,
+            affected_tokens: vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")],
+            instruction_type: InstructionType::Management,
+            definition: InstructionDefinition {
+                blueprint_path: "test_data/blueprints/deposit.yaml".parse().unwrap(),
+                label: "weth".into(),
+                name: "deposit".into(),
+                override_name: None,
+                inputs: management_inputs,
+            },
+        };
+
+        // Create Position with position_tokens
+        let position_tokens = vec![
+            address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+            address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8"),
+        ];
+
+        let pos = Position {
+            id: U256::from(123),
+            group_id: U256::from(1),
+            position_tokens: position_tokens.clone(),
+            description: None,
+            instructions: vec![management_inst, accounting_inst],
+            global_tags: vec![],
+        };
+
+        // Call create_rootfile_instructions
+        let transpiled = create_rootfile_instructions(&pos).unwrap();
+        assert_eq!(transpiled.len(), 2);
+
+        // First instruction is Management - should have empty position_tokens
+        let management_result = &transpiled[0];
+        assert_eq!(management_result.instruction_name, "deposit");
+        assert!(
+            management_result.inner.position_tokens.is_empty(),
+            "Management instruction should have empty position_tokens"
+        );
+
+        // Second instruction is Accounting - should have the position's tokens
+        let accounting_result = &transpiled[1];
+        assert_eq!(accounting_result.instruction_name, "account");
+        assert_eq!(
+            accounting_result.inner.position_tokens, position_tokens,
+            "Accounting instruction should have the position's tokens"
+        );
     }
 }
