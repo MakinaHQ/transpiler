@@ -176,6 +176,20 @@ impl PositionParser {
             templates.extend(position_vars);
 
             let instructions = self.instructions(position, templates)?;
+            if instructions
+                .iter()
+                .filter(|inst| inst.instruction_type == InstructionType::Accounting)
+                .count()
+                != 1
+            {
+                return Err(self
+                    .error(
+                        position.span,
+                        "position must have exactly one accounting instruction",
+                    )
+                    .into());
+            }
+
             vec.push(Position {
                 id: self.position_id(position)?,
                 group_id: self.position_group_id(position)?,
@@ -785,6 +799,9 @@ impl Parser for PositionParser {
 #[cfg(test)]
 mod tests {
     use alloy::primitives::address;
+    use color_eyre::SectionExt;
+
+    use crate::core::parser::common::ParserError;
 
     use super::*;
 
@@ -913,6 +930,30 @@ mod tests {
             pos1_token.value.as_address().unwrap(),
             pos2_token.value.as_address().unwrap()
         );
+    }
+
+    #[test]
+    fn test_position_with_two_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_two_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+        )
+        .unwrap();
+
+        let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
+        assert!(err.msg().contains("exactly one accounting instruction"));
+    }
+
+    #[test]
+    fn test_position_without_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_without_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+        )
+        .unwrap();
+
+        let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
+        assert!(err.msg().contains("exactly one accounting instruction"));
     }
 
     #[test]

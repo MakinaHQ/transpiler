@@ -63,6 +63,10 @@ impl ParserError {
         self.third_msg = Some(msg.into());
         self
     }
+
+    pub fn msg(&self) -> &str {
+        &self.msg
+    }
 }
 
 /// A parsed template string
