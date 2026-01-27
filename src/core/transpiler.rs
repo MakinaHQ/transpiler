@@ -47,6 +47,7 @@ pub fn create_rootfile_instructions(
     let mut instructions = Vec::new();
 
     for inst in &position.instructions {
+        // Note: even though Management instructions can also receive position tokens they are not actually used during execution.
         let position_tokens = if inst.instruction_type == InstructionType::Accounting {
             &position.position_tokens
         } else {
