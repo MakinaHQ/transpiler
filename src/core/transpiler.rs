@@ -16,7 +16,7 @@ use crate::types::InstructionType;
 use crate::{
     core::parser::{
         blueprint::{
-            BlueprintAction, BlueprintCall, BlueprintInputSlot, BlueprintParameter,
+            Blueprint, BlueprintAction, BlueprintCall, BlueprintInputSlot, BlueprintParameter,
             BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
         },
         positions::types::{Instruction, InstructionDefinition, Position},
@@ -113,7 +113,7 @@ fn transpile(
     let mut return_values = Vec::new();
 
     for call in action.calls.iter() {
-        let target = transpile_target(&call.target, &inst.definition);
+        let target = transpile_target(&call.target, &inst.definition, &blueprint);
 
         let args = transpile_parameters(
             &call.parameters,
@@ -122,6 +122,7 @@ fn transpile(
             &inst.definition,
             &return_values,
             &mut checked_slots,
+            &blueprint,
         );
 
         let (return_types, command_flags) = resolve_call_metadata(call);
@@ -173,7 +174,11 @@ fn transpile(
     Ok((protocol, name, label, makina_inst))
 }
 
-fn transpile_target(target: &BlueprintTarget, definition: &InstructionDefinition) -> Address {
+fn transpile_target(
+    target: &BlueprintTarget,
+    definition: &InstructionDefinition,
+    blueprint: &Blueprint,
+) -> Address {
     match target {
         BlueprintTarget::Address(target) => *target,
         BlueprintTarget::Input(name) => {
@@ -181,7 +186,17 @@ fn transpile_target(target: &BlueprintTarget, definition: &InstructionDefinition
                 .inputs
                 .iter()
                 .find(|(label, _)| label == &name)
-                .unwrap_or_else(|| panic!("could not find input {name}"));
+                .unwrap_or_else(|| {
+                    let available: Vec<_> = definition.inputs.keys().collect();
+                    let required: Vec<_> = blueprint.inputs.keys().collect();
+                    panic!(
+                        "could not find input \"{name}\"\n  \
+                         blueprint: {}\n  \
+                         available inputs: {available:?}\n  \
+                         required inputs: {required:?}",
+                        blueprint.path.display()
+                    )
+                });
 
             input.value.as_address().expect("target must be address")
         }
@@ -195,6 +210,7 @@ fn transpile_parameters(
     definition: &InstructionDefinition,
     return_values: &[ReturnValue],
     checked_slots: &mut Vec<Bytes>,
+    blueprint: &Blueprint,
 ) -> Vec<Value> {
     let mut result = Vec::new();
 
@@ -206,6 +222,7 @@ fn transpile_parameters(
             definition,
             return_values,
             checked_slots,
+            blueprint,
         );
 
         result.push(value);
@@ -221,6 +238,7 @@ fn transpile_parameter(
     definition: &InstructionDefinition,
     return_values: &[ReturnValue],
     checked_slots: &mut Vec<Bytes>,
+    blueprint: &Blueprint,
 ) -> Value {
     match parameter {
         BlueprintParameter::Input(name) => {
@@ -228,7 +246,17 @@ fn transpile_parameter(
                 .inputs
                 .iter()
                 .find(|(label, _)| label == &name)
-                .unwrap_or_else(|| panic!("could not find input {name}"));
+                .unwrap_or_else(|| {
+                    let available: Vec<_> = definition.inputs.keys().collect();
+                    let required: Vec<_> = blueprint.inputs.keys().collect();
+                    panic!(
+                        "could not find input \"{name}\"\n  \
+                         blueprint: {}\n  \
+                         available inputs: {available:?}\n  \
+                         required inputs: {required:?}",
+                        blueprint.path.display()
+                    )
+                });
 
             let encoded: Bytes = match input.r#type {
                 DynSolType::String => input
@@ -276,6 +304,7 @@ fn transpile_parameter(
                     definition,
                     return_values,
                     checked_slots,
+                    blueprint,
                 );
                 values.push(value);
             }
@@ -293,6 +322,7 @@ fn transpile_parameter(
                     definition,
                     return_values,
                     checked_slots,
+                    blueprint,
                 );
                 values.push(value);
             }
@@ -310,6 +340,7 @@ fn transpile_parameter(
                     definition,
                     return_values,
                     checked_slots,
+                    blueprint,
                 );
                 values.push(value);
             }

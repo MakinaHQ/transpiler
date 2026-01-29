@@ -22,6 +22,7 @@ use crate::{
         positions::types::{InstructionTemplate, InstructionTemplateEnum},
         sol_types::{self, YamlSolValue},
     },
+    helpers_list::HelpersList,
     token_list::{TokenInfo, TokenList},
     types::InstructionType,
 };
@@ -32,6 +33,7 @@ use super::types::{Instruction, InstructionDefinition, Position, Root, SolValue}
 pub struct PositionParser {
     root_path: PathBuf,
     token_list: TokenList,
+    helpers_list: HelpersList,
     _source: String,
     template_regex: Regex,
     source_with_includes: String,
@@ -39,12 +41,23 @@ pub struct PositionParser {
 
 impl PositionParser {
     /// Create a new position parser.
-    pub fn new(root_path: PathBuf, token_list_path: Option<PathBuf>) -> miette::Result<Self> {
+    pub fn new(
+        root_path: PathBuf,
+        token_list_path: Option<PathBuf>,
+        helpers_list_path: Option<PathBuf>,
+    ) -> miette::Result<Self> {
         let token_list = if let Some(path) = token_list_path {
             TokenList::new(path.clone())
                 .map_err(|err| miette!("Could not load token list from {:?}: {}", path, err))?
         } else {
             TokenList::default()
+        };
+
+        let helpers_list = if let Some(path) = helpers_list_path {
+            HelpersList::new(path.clone())
+                .map_err(|err| miette!("Could not load helpers list from {:?}: {}", path, err))?
+        } else {
+            HelpersList::default()
         };
 
         let content = std::fs::read_to_string(&root_path)
@@ -65,6 +78,7 @@ impl PositionParser {
         Ok(Self {
             root_path,
             token_list,
+            helpers_list,
             _source: source,
             template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").expect("is valid regex"),
             source_with_includes: content,
@@ -83,9 +97,12 @@ impl PositionParser {
     /// Parse positions from YAML.
     fn parse_yaml(&self, marked_yaml: &Vec<MarkedYaml>) -> miette::Result<Root> {
         let root = marked_yaml.first().expect("parsed.len() == 1");
-        let config = self.config(root)?;
-        let mut templates = config.clone();
-        templates.append(&mut self.tokens().map_err(|err| miette!("{err}"))?);
+        // Build tokens and helpers templates BEFORE config so config can reference them
+        let mut templates = self.tokens().map_err(|err| miette!("{err}"))?;
+        templates.append(&mut self.helpers().map_err(|err| miette!("{err}"))?);
+        // Now parse config with access to tokens/helpers templates
+        let config = self.config(root, &mut templates)?;
+        templates.append(&mut config.clone());
         let positions = self.positions(root, &mut templates)?;
         let tokens_used: BTreeMap<String, TokenInfo> = templates
             .iter()
@@ -124,9 +141,35 @@ impl PositionParser {
         Ok(map)
     }
 
+    fn helpers(&self) -> eyre::Result<BTreeMap<String, InstructionTemplate>> {
+        let mut map = BTreeMap::new();
+
+        for helper in &self.helpers_list.helpers {
+            let chain = helper.chain;
+            let name = &helper.name;
+
+            let key = format!("${{helpers.{chain}.{name}}}");
+
+            if map.contains_key(&key) {
+                return Err(eyre::eyre!(
+                    "Duplicated helper entry: \"{}\" - helper entry is duplicated",
+                    key
+                ));
+            }
+
+            map.insert(
+                key,
+                InstructionTemplate::new(InstructionTemplateEnum::HelperInfo(helper.clone())),
+            );
+        }
+
+        Ok(map)
+    }
+
     fn config<'a>(
         &self,
         root: &'a MarkedYaml<'a>,
+        templates: &mut BTreeMap<String, InstructionTemplate>,
     ) -> miette::Result<BTreeMap<String, InstructionTemplate>> {
         let Some(config) = root.data.as_mapping_get("config") else {
             return Ok(BTreeMap::new());
@@ -144,12 +187,58 @@ impl PositionParser {
                 .as_str()
                 .ok_or(self.error(key.span, "Config has invalid name"))?;
 
-            let key = format!("${{config.{name}}}");
-            let value = self.sol_value(value)?;
-            map.insert(
-                key,
-                InstructionTemplate::new(InstructionTemplateEnum::Config(value)),
-            );
+            let config_key = format!("${{config.{name}}}");
+
+            // Check if the value field contains a template reference
+            let value_field = value
+                .data
+                .as_mapping_get("value")
+                .ok_or(self.error(value.span, "'value' is missing"))?;
+
+            if self.is_template(value_field) {
+                // Resolve the template value using the provided templates
+                let parsed = self.parse_template(value, templates, false)?;
+
+                // Mark the template as used
+                let value_str = value_field
+                    .data
+                    .as_str()
+                    .expect("already parsed as template");
+                if let Some(tmpl) = templates.get_mut(value_str) {
+                    tmpl.is_used = true;
+                }
+
+                // Extract the resolved value and store as Config
+                let resolved_value = match parsed.template {
+                    InstructionTemplateEnum::Config(config) => config,
+                    InstructionTemplateEnum::Raw(raw) => raw,
+                    InstructionTemplateEnum::TokenInfo(token_info) => YamlSolValue {
+                        r#type: DynSolType::Address,
+                        value: token_info.address.into(),
+                    },
+                    InstructionTemplateEnum::HelperInfo(helper_info) => YamlSolValue {
+                        r#type: DynSolType::Address,
+                        value: helper_info.address.into(),
+                    },
+                    InstructionTemplateEnum::PositionVar(_) => {
+                        return Err(
+                            self.error(value_field.span, "PositionVar cannot be used in config")
+                        )?;
+                    }
+                };
+
+                map.insert(
+                    config_key,
+                    InstructionTemplate::new(InstructionTemplateEnum::Config(resolved_value)),
+                );
+            } else {
+                // Regular raw value
+                let sol_value = self.sol_value(value)?;
+                map.insert(
+                    config_key,
+                    InstructionTemplate::new(InstructionTemplateEnum::Config(sol_value)),
+                );
+            }
         }
 
         Ok(map)
@@ -392,6 +481,7 @@ impl PositionParser {
                     raw.value.as_address().expect("already checked the type")
                 }
                 InstructionTemplateEnum::TokenInfo(ref token_info) => token_info.address,
+                InstructionTemplateEnum::HelperInfo(ref helper_info) => helper_info.address,
                 InstructionTemplateEnum::PositionVar(_) => {
                     return Err(self.error(
                         token.span,
@@ -458,7 +548,7 @@ impl PositionParser {
 
         if self.is_template(label) {
             let template = self.parse_template_str(label)?;
-            if !["config", "token_list", "position"].contains(&*template.source) {
+            if !["config", "token_list", "helpers", "position"].contains(&*template.source) {
                 return Err(self.error(template.source, "unknown source"))?;
             }
 
@@ -480,6 +570,9 @@ impl PositionParser {
                 })?,
                 InstructionTemplateEnum::TokenInfo(_) => {
                     return Err(self.error(label.span, "token_list cannot be used for labels"))?;
+                }
+                InstructionTemplateEnum::HelperInfo(_) => {
+                    return Err(self.error(label.span, "helpers cannot be used for labels"))?;
                 }
             };
 
@@ -510,6 +603,7 @@ impl PositionParser {
             InstructionTemplateEnum::Config(config) => config.value,
             InstructionTemplateEnum::Raw(raw) => raw.value,
             InstructionTemplateEnum::TokenInfo(token_info) => token_info.address.into(),
+            InstructionTemplateEnum::HelperInfo(helper_info) => helper_info.address.into(),
             InstructionTemplateEnum::PositionVar(_) => {
                 unreachable!("PositionVar is resolved to Raw in parse_template")
             }
@@ -773,7 +867,7 @@ impl PositionParser {
         }
 
         let template = self.parse_template_str(value_field)?;
-        if !["config", "token_list", "position"].contains(&*template.source) {
+        if !["config", "token_list", "helpers", "position"].contains(&*template.source) {
             return Err(self.error(template.source, "unknown source"))?;
         }
 
@@ -845,7 +939,8 @@ mod tests {
 
     #[test]
     fn test_process_blueprint_path() {
-        let parser = PositionParser::new(PathBuf::from("test_data/caliber.yaml"), None).unwrap();
+        let parser =
+            PositionParser::new(PathBuf::from("test_data/caliber.yaml"), None, None).unwrap();
 
         let root = parser.parse().unwrap();
 
@@ -854,8 +949,12 @@ mod tests {
 
     #[test]
     fn test_invalid_tag() {
-        let parser =
-            PositionParser::new(PathBuf::from("test_data/caliber_invalid_tag.yaml"), None).unwrap();
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_invalid_tag.yaml"),
+            None,
+            None,
+        )
+        .unwrap();
 
         // expect revert
         parser.parse().unwrap_err();
@@ -865,6 +964,7 @@ mod tests {
     fn test_position_vars() {
         let parser = PositionParser::new(
             PathBuf::from("test_data/caliber_with_position_vars.yaml"),
+            None,
             None,
         )
         .unwrap();
@@ -945,6 +1045,7 @@ mod tests {
         let parser = PositionParser::new(
             PathBuf::from("test_data/caliber_with_position_vars.yaml"),
             None,
+            None,
         )
         .unwrap();
 
@@ -975,6 +1076,7 @@ mod tests {
         let parser = PositionParser::new(
             PathBuf::from("test_data/caliber_two_accounting.yaml"),
             Some(PathBuf::from("test_data/token_lists/test.json")),
+            None,
         )
         .unwrap();
 
@@ -987,6 +1089,7 @@ mod tests {
         let parser = PositionParser::new(
             PathBuf::from("test_data/caliber_without_accounting.yaml"),
             Some(PathBuf::from("test_data/token_lists/test.json")),
+            None,
         )
         .unwrap();
 
@@ -1000,6 +1103,7 @@ mod tests {
         let parser = PositionParser::new(
             PathBuf::from("test_data/caliber_with_token_list_vars.yaml"),
             Some(PathBuf::from("test_data/token_lists/test.json")),
+            None,
         )
         .unwrap();
 
@@ -1045,5 +1149,37 @@ mod tests {
         // Verify that tokens from token_list are included in the output
         assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
         assert!(root.tokens.contains_key("${token_list.mainnet.DETH}"));
+    }
+
+    #[test]
+    fn test_helpers_in_config() {
+        // Test that config values can reference helpers variables
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_with_helpers_vars.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+            Some(PathBuf::from("test_data/helpers/test.json")),
+        )
+        .unwrap();
+
+        let root = parser.parse().unwrap();
+
+        // Should have 1 position
+        assert_eq!(root.positions.len(), 1);
+
+        // Check that config has the context_helper_address resolved from helpers
+        let context_helper_config = root.config.get("${config.context_helper_address}").unwrap();
+        match &context_helper_config.template {
+            InstructionTemplateEnum::Config(yaml_sol_val) => {
+                // The helper address should be resolved to the ContextHelper address
+                assert_eq!(
+                    yaml_sol_val.value.as_address().unwrap(),
+                    address!("0x0f431322E1fF2500D4C5a4E090A7Da7344F953BE")
+                );
+            }
+            _ => panic!("Expected Config template enum"),
+        }
+
+        // Verify that tokens from token_list are still included in the output
+        assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
     }
 }

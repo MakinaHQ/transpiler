@@ -1,0 +1,11 @@
+{
+    "name": "Invalid Helper List",
+    "timestamp": "2026-01-28T10:00:00.000Z",
+    "helpers": [
+        {
+            "chainId": "arbitrum_doesnt_exist",
+            "address": "0x0f431322E1fF2500D4C5a4E090A7Da7344F953BE",
+            "name": "BadHelper"
+        }
+    ]
+}
