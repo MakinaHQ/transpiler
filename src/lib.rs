@@ -9,7 +9,6 @@ pub mod token_list;
 pub mod types;
 
 use core::parser::positions::parser::PositionParser;
-use core::parser::transpiler_utils;
 use core::transpiler::get_rootfile_from_positions;
 use std::path::PathBuf;
 
@@ -24,14 +23,6 @@ use crate::types::Rootfile;
 
 pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
     match cli.command() {
-        Command::ListUtils { verbose } => {
-            if verbose {
-                print!("{}", transpiler_utils::format_all_utils_docs());
-            } else {
-                print!("{}", transpiler_utils::format_utils_list());
-            }
-            Ok(())
-        }
         Command::Transpile => {
             let (_, rootfile) = parse_input_files(cli)?;
             write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
@@ -87,7 +78,13 @@ fn parse_input_files(
 /// Writes formatted rootfile to path
 fn write_rootfile(content: &Rootfile, out: &PathBuf) -> Result<()> {
     if let Some(parent) = out.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| {
+            eyre!(
+                "Failed to create output directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
 
     let text = toml::to_string_pretty(content)?;

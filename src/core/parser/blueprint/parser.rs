@@ -480,10 +480,12 @@ impl BlueprintParser {
         // if value is not a template string
         // try parsing as raw value and return the result
         if !self.is_template(value_field) {
-            let value = parse_sol_value_marked(&r#type, value_field).ok_or_else(|| {
-                self.error(value_field, "could not be parsed")
-                    .with_second_location(r#type.span, "into specified type")
-            })?;
+            let value = parse_sol_value_marked(&r#type, value_field)
+                .map_err(|e| self.error(value_field, e.to_string()))?
+                .ok_or_else(|| {
+                    self.error(value_field, "could not be parsed")
+                        .with_second_location(r#type.span, "into specified type")
+                })?;
 
             return Ok(BlueprintTemplate::Raw(YamlSolValue {
                 r#type: r#type.inner,

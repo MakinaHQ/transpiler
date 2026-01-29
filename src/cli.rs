@@ -18,13 +18,6 @@ pub enum Command {
     },
     /// Compute and print the root of the intput file
     Root,
-    /// List available transpiler utility functions
-    ListUtils {
-        /// Show detailed documentation with examples (default: compact list)
-        #[arg(long, short)]
-        #[clap(default_value_t = false)]
-        verbose: bool,
-    },
 }
 
 #[derive(Parser)]

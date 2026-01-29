@@ -12,7 +12,11 @@ use std::str::FromStr;
 
 use crate::meta_sol_types;
 
-use super::{errors::ParserError, helpers, transpiler_utils::TranspilerUtil};
+use super::{
+    errors::ParserError,
+    helpers,
+    transpiler_utils::{Keccak256Error, TranspilerUtil, UtilParseError},
+};
 
 #[derive(Debug, Error)]
 pub enum SolTypeError {
@@ -33,8 +37,10 @@ pub enum SolTypeError {
         expected: Box<DynSolType>,
         got: Box<DynSolType>,
     },
-    #[error("Transpiler util error: {0}")]
-    TranspilerUtilError(#[from] super::transpiler_utils::TranspilerUtilError),
+    #[error("{0}")]
+    UtilParseError(#[from] UtilParseError),
+    #[error("{0}")]
+    Keccak256Error(#[from] Keccak256Error),
 }
 
 pub type SolTypeResult<T> = Result<T, SolTypeError>;
@@ -72,8 +78,8 @@ pub fn parse_sol_value(
     yaml: &Yaml,
     field_path: &str,
 ) -> SolTypeResult<DynSolValue> {
-    // Check for transpiler util first (e.g., ${keccak256(...)}, ${selector(...)})
-    // This is done at the top to support utils returning any type, not just FixedBytes
+    // Check for transpiler util first (e.g., ${keccak256(...)})
+    // keccak256 returns bytes32
     if let Some(yaml_str) = yaml.as_str()
         && let Some(util_result) = TranspilerUtil::try_parse(yaml_str)
     {
@@ -217,8 +223,14 @@ pub fn parse_sol_value(
 pub fn parse_sol_value_marked<'a>(
     sol_type: &DynSolType,
     field: &'a MarkedYaml<'a>,
-) -> Option<DynSolValue> {
-    parse_sol_value(sol_type, &unmark(field.clone()), "").ok()
+) -> Result<Option<DynSolValue>, SolTypeError> {
+    match parse_sol_value(sol_type, &unmark(field.clone()), "") {
+        Ok(value) => Ok(Some(value)),
+        // Propagate transpiler util errors - these are actionable and should be shown to users
+        Err(e @ SolTypeError::UtilParseError(_)) => Err(e),
+        Err(e @ SolTypeError::Keccak256Error(_)) => Err(e),
+        Err(_) => Ok(None),
+    }
 }
 
 fn unmark<'a>(input: MarkedYaml<'a>) -> Yaml<'a> {
@@ -273,29 +285,21 @@ mod tests {
         let sol_type = DynSolType::FixedBytes(16);
 
         let result = parse_sol_value(&sol_type, &yaml, "test");
-        assert!(matches!(result, Err(SolTypeError::TranspilerUtilError(_))));
+        assert!(matches!(result, Err(SolTypeError::Keccak256Error(_))));
     }
 
     #[test]
     fn test_transpiler_util_type_mismatch_address() {
-        use crate::core::parser::transpiler_utils::TranspilerUtilError;
-
         // keccak256 returns bytes32, should fail for address
         let yaml = yaml_string("${keccak256(test)}");
         let sol_type = DynSolType::Address;
 
         let result = parse_sol_value(&sol_type, &yaml, "test");
         match result {
-            Err(SolTypeError::TranspilerUtilError(TranspilerUtilError::TypeMismatch {
-                function,
-                returns,
-                expected,
-            })) => {
-                assert_eq!(function, "keccak256");
-                assert_eq!(returns, "bytes32");
+            Err(SolTypeError::Keccak256Error(Keccak256Error::TypeMismatch(expected))) => {
                 assert_eq!(expected, "address");
             }
-            _ => panic!("Expected TranspilerUtilError::TypeMismatch"),
+            _ => panic!("Expected Keccak256Error::TypeMismatch"),
         }
     }
 
@@ -306,7 +310,7 @@ mod tests {
         let sol_type = DynSolType::Uint(256);
 
         let result = parse_sol_value(&sol_type, &yaml, "test");
-        assert!(matches!(result, Err(SolTypeError::TranspilerUtilError(_))));
+        assert!(matches!(result, Err(SolTypeError::Keccak256Error(_))));
     }
 
     // ========== Regular Value Tests ==========
@@ -338,5 +342,37 @@ mod tests {
         let result = parse_sol_value(&sol_type, &yaml, "test");
         // Should fail as invalid hex, not as TranspilerUtilError
         assert!(matches!(result, Err(SolTypeError::InvalidHexValue(_))));
+    }
+
+    // ========== "Any String" Input Integration Tests ==========
+
+    #[test]
+    fn test_transpiler_util_keccak256_with_special_chars() {
+        // Test that non-identifier strings (spaces, slashes, etc.) work through the full pipeline
+        let yaml = yaml_string("${keccak256(test/path value)}");
+        let sol_type = DynSolType::FixedBytes(32);
+
+        let result = parse_sol_value(&sol_type, &yaml, "test").unwrap();
+
+        let DynSolValue::FixedBytes(bytes, size) = result else {
+            panic!("Expected FixedBytes");
+        };
+        assert_eq!(size, 32);
+        assert_eq!(bytes, keccak256("test/path value".as_bytes()));
+    }
+
+    #[test]
+    fn test_transpiler_util_keccak256_quoted_special_chars() {
+        // Test quoted non-identifier strings work through the full pipeline
+        let yaml = yaml_string("${keccak256(\"test/path value\")}");
+        let sol_type = DynSolType::FixedBytes(32);
+
+        let result = parse_sol_value(&sol_type, &yaml, "test").unwrap();
+
+        let DynSolValue::FixedBytes(bytes, size) = result else {
+            panic!("Expected FixedBytes");
+        };
+        assert_eq!(size, 32);
+        assert_eq!(bytes, keccak256("test/path value".as_bytes()));
     }
 }
