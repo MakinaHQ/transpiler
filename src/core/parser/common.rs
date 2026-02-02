@@ -100,12 +100,10 @@ pub trait Parser {
             .as_mapping_get("value")
             .ok_or(self.error(field.span, "'value' is missing"))?;
 
-        let value = parse_sol_value_marked(&r#type, value_field)
-            .map_err(|e| self.error(value_field, e.to_string()))?
-            .ok_or(
-                self.error(value_field, "could not be parsed")
-                    .with_second_location(r#type.span, "into specified type"),
-            )?;
+        let value = parse_sol_value_marked(&r#type, value_field, self.named_source())?.ok_or(
+            self.error(value_field, "could not be parsed")
+                .with_second_location(r#type.span, "into specified type"),
+        )?;
 
         Ok(YamlSolValue {
             r#type: r#type.inner,

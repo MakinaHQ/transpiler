@@ -6,6 +6,7 @@ use alloy::{
     primitives::{Address, FixedBytes, I256, U256},
 };
 
+use miette::NamedSource;
 use thiserror::Error;
 
 use std::str::FromStr;
@@ -13,6 +14,7 @@ use std::str::FromStr;
 use crate::meta_sol_types;
 
 use super::{
+    common::ParserError as MietteParserError,
     errors::ParserError,
     helpers,
     transpiler_utils::{Keccak256Error, TranspilerUtil, UtilParseError},
@@ -223,12 +225,17 @@ pub fn parse_sol_value(
 pub fn parse_sol_value_marked<'a>(
     sol_type: &DynSolType,
     field: &'a MarkedYaml<'a>,
-) -> Result<Option<DynSolValue>, SolTypeError> {
+    named_source: NamedSource<String>,
+) -> miette::Result<Option<DynSolValue>> {
     match parse_sol_value(sol_type, &unmark(field.clone()), "") {
         Ok(value) => Ok(Some(value)),
         // Propagate transpiler util errors - these are actionable and should be shown to users
-        Err(e @ SolTypeError::UtilParseError(_)) => Err(e),
-        Err(e @ SolTypeError::Keccak256Error(_)) => Err(e),
+        Err(SolTypeError::UtilParseError(e)) => {
+            Err(MietteParserError::new(named_source, field.span, e.to_string()).into())
+        }
+        Err(SolTypeError::Keccak256Error(e)) => {
+            Err(MietteParserError::new(named_source, field.span, e.to_string()).into())
+        }
         Err(_) => Ok(None),
     }
 }
@@ -266,7 +273,8 @@ mod tests {
 
     #[test]
     fn test_transpiler_util_keccak256_bytes32() {
-        let yaml = yaml_string("${keccak256(makina.mainnet.vault.slot)}");
+        // Note: keccak256() hashes the literal string, not a config lookup
+        let yaml = yaml_string("${keccak256(my_storage_slot)}");
         let sol_type = DynSolType::FixedBytes(32);
 
         let result = parse_sol_value(&sol_type, &yaml, "test").unwrap();
@@ -275,7 +283,7 @@ mod tests {
             panic!("Expected FixedBytes");
         };
         assert_eq!(size, 32);
-        assert_eq!(bytes, keccak256("makina.mainnet.vault.slot".as_bytes()));
+        assert_eq!(bytes, keccak256("my_storage_slot".as_bytes()));
     }
 
     #[test]
