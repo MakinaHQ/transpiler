@@ -759,10 +759,11 @@ impl PositionParser {
         // try parsing as raw value and return the result
         if !self.is_template(value_field) {
             let value =
-                sol_types::parse_sol_value_marked(&r#type, value_field).ok_or_else(|| {
-                    self.error(value_field, "could not be parsed...")
-                        .with_second_location(r#type.span, "...into specified type")
-                })?;
+                sol_types::parse_sol_value_marked(&r#type, value_field, self.named_source())?
+                    .ok_or_else(|| {
+                        self.error(value_field, "could not be parsed...")
+                            .with_second_location(r#type.span, "...into specified type")
+                    })?;
 
             return Ok(InstructionTemplate::new(InstructionTemplateEnum::Raw(
                 YamlSolValue {
