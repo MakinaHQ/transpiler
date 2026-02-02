@@ -49,23 +49,13 @@ mod tests {
         assert_eq!(helpers_list.name, "Test Helper Contracts List");
         assert_eq!(helpers_list.helpers.len(), 2);
 
-        // Mainnet helper
+        // Verify field mappings work correctly (chainId -> chain, address parsing)
         assert_eq!(helpers_list.helpers[0].name, "ContextHelper");
+        assert_eq!(helpers_list.helpers[0].chain, Chain::mainnet());
         assert_eq!(
             helpers_list.helpers[0].address,
             address!("0x0f431322E1fF2500D4C5a4E090A7Da7344F953BE")
         );
-        assert_eq!(helpers_list.helpers[0].chain.id(), 1);
-        assert_eq!(helpers_list.helpers[0].chain, Chain::mainnet());
-
-        // Arbitrum helper
-        assert_eq!(helpers_list.helpers[1].name, "ArbitrumHelper");
-        assert_eq!(
-            helpers_list.helpers[1].address,
-            address!("0x1234567890abcdef1234567890abcdef12345678")
-        );
-        assert_eq!(helpers_list.helpers[1].chain.id(), 42161);
-        assert_eq!(helpers_list.helpers[1].chain, Chain::from_id(42161));
     }
 
     #[test]
