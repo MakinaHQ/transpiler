@@ -1,6 +1,6 @@
 target/
 .env
-CLAUDE.md
+.devcontainer/
 
 # output
 rootfile.toml
