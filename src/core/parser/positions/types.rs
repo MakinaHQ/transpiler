@@ -8,7 +8,10 @@ use alloy::{
     primitives::{Address, U256},
 };
 
-use crate::{core::parser::sol_types::YamlSolValue, token_list::TokenInfo, types::InstructionType};
+use crate::{
+    core::parser::sol_types::YamlSolValue, helpers_list::HelperInfo, token_list::TokenInfo,
+    types::InstructionType,
+};
 
 #[derive(Debug)]
 pub struct Root {
@@ -70,6 +73,7 @@ pub enum InstructionTemplateEnum {
     Config(YamlSolValue),
     Raw(YamlSolValue),
     TokenInfo(TokenInfo),
+    HelperInfo(HelperInfo),
     PositionVar(String),
 }
 
@@ -99,6 +103,7 @@ impl InstructionTemplate {
             InstructionTemplateEnum::Raw(raw) => Some(&raw.r#type),
             InstructionTemplateEnum::Config(config) => Some(&config.r#type),
             InstructionTemplateEnum::TokenInfo(_) => Some(&DynSolType::Address),
+            InstructionTemplateEnum::HelperInfo(_) => Some(&DynSolType::Address),
             InstructionTemplateEnum::PositionVar(_) => None,
         }
     }

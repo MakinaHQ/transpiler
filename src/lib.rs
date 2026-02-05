@@ -3,6 +3,7 @@ pub mod cli;
 pub mod core;
 pub mod errors;
 pub mod etherscan;
+pub mod helpers_list;
 pub mod merkletree;
 pub mod meta_sol_types;
 pub mod token_list;
@@ -65,9 +66,24 @@ fn parse_input_files(
         .map_err(|err| miette!("{}", err));
     }
 
-    let parsed = PositionParser::new(cli.input_file.clone(), cli.token_list.clone())?
-        .parse()
-        .map_err(|err| miette!("{:?}", err))?;
+    // verify the helpers list path exists, if provided
+    if let Some(helpers_path) = &cli.helpers
+        && !helpers_path.is_file()
+    {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("helpers list file {} not found", helpers_path.display()),
+        )))
+        .map_err(|err| miette!("{}", err));
+    }
+
+    let parsed = PositionParser::new(
+        cli.input_file.clone(),
+        cli.token_list.clone(),
+        cli.helpers.clone(),
+    )?
+    .parse()
+    .map_err(|err| miette!("{:?}", err))?;
 
     let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
         .map_err(|err| miette!("{:?}", err))?;
