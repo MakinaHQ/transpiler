@@ -932,7 +932,7 @@ impl Parser for PositionParser {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::address;
+    use alloy::{dyn_abi::DynSolValue, primitives::address};
 
     use crate::core::parser::common::ParserError;
 
@@ -1150,6 +1150,58 @@ mod tests {
         // Verify that tokens from token_list are included in the output
         assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
         assert!(root.tokens.contains_key("${token_list.mainnet.DETH}"));
+    }
+
+    #[test]
+    fn test_numeric_position_vars() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_with_numeric_position_vars.yaml"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let root = parser.parse().unwrap();
+
+        assert_eq!(root.positions.len(), 2);
+
+        // Position 1: weeks = 1
+        let pos1 = &root.positions[0];
+        assert_eq!(pos1.instructions.len(), 1);
+        let lock_input = pos1.instructions[0]
+            .definition
+            .inputs
+            .get("lock_epochs")
+            .expect("lock_epochs input");
+        assert_eq!(lock_input.r#type, DynSolType::Uint(32));
+        assert_eq!(
+            lock_input.value,
+            DynSolValue::Uint(U256::from(1), 32),
+            "weeks=1 should parse as uint32"
+        );
+        assert_eq!(pos1.instructions[0].definition.label, "1w-lock");
+        assert_eq!(
+            pos1.instructions[0].affected_tokens[0],
+            address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+        );
+
+        // Position 2: weeks = 52
+        let pos2 = &root.positions[1];
+        let lock_input2 = pos2.instructions[0]
+            .definition
+            .inputs
+            .get("lock_epochs")
+            .expect("lock_epochs input");
+        assert_eq!(
+            lock_input2.value,
+            DynSolValue::Uint(U256::from(52), 32),
+            "weeks=52 should parse as uint32"
+        );
+        assert_eq!(pos2.instructions[0].definition.label, "52w-lock");
+        assert_eq!(
+            pos2.instructions[0].affected_tokens[0],
+            address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+        );
     }
 
     #[test]

@@ -108,22 +108,42 @@ pub fn parse_sol_value(
             }
         }
         DynSolType::Int(bits) => {
-            let yaml_value = yaml.as_str().ok_or(ParserError::InvalidYaml)?;
-
-            let value = if yaml_value.starts_with("0x") {
-                I256::from_hex_str(yaml_value)
-                    .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+            // Handle both string and integer YAML values
+            let value = if let Some(yaml_str) = yaml.as_str() {
+                if yaml_str.starts_with("0x") {
+                    I256::from_hex_str(yaml_str)
+                        .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+                } else {
+                    I256::from_dec_str(yaml_str)
+                        .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+                }
+            } else if let Some(yaml_int) = yaml.as_integer() {
+                I256::try_from(yaml_int).map_err(|_| {
+                    SolTypeError::InvalidSolValue(format!(
+                        "Integer value {yaml_int} out of range for I256"
+                    ))
+                })?
             } else {
-                I256::from_dec_str(yaml_value)
-                    .map_err(|err| SolTypeError::InvalidIntValue(Box::new(err)))?
+                return Err(ParserError::InvalidYaml.into());
             };
 
             Ok(DynSolValue::Int(value, *bits))
         }
         DynSolType::Uint(bits) => {
-            let yaml_value = yaml.as_str().ok_or(ParserError::InvalidYaml)?;
-            let value = U256::from_str(yaml_value)
-                .map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))?;
+            // Handle both string and integer YAML values
+            let value = if let Some(yaml_str) = yaml.as_str() {
+                U256::from_str(yaml_str)
+                    .map_err(|err| SolTypeError::InvalidUintValue(Box::new(err)))?
+            } else if let Some(yaml_int) = yaml.as_integer() {
+                if yaml_int < 0 {
+                    return Err(SolTypeError::InvalidSolValue(format!(
+                        "Expected unsigned integer, got negative value: {yaml_int}"
+                    )));
+                }
+                U256::from(yaml_int as u64)
+            } else {
+                return Err(ParserError::InvalidYaml.into());
+            };
             Ok(DynSolValue::Uint(value, *bits))
         }
         DynSolType::Address => {
