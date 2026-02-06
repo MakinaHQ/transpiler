@@ -1165,32 +1165,56 @@ mod tests {
 
         assert_eq!(root.positions.len(), 2);
 
-        // Position 1: weeks = 1
+        // Position 1: weeks = 1, amount = 100
         let pos1 = &root.positions[0];
         assert_eq!(pos1.instructions.len(), 1);
-        let lock_input = pos1.instructions[0]
+        let lock_epochs = pos1.instructions[0]
             .definition
             .inputs
             .get("lock_epochs")
             .expect("lock_epochs input");
-        assert_eq!(lock_input.r#type, DynSolType::Uint(32));
+        assert_eq!(lock_epochs.r#type, DynSolType::Uint(32));
         assert_eq!(
-            lock_input.value,
+            lock_epochs.value,
             DynSolValue::Uint(U256::from(1), 32),
             "weeks=1 should parse as uint32"
         );
 
-        // Position 2: weeks = 52
+        let lock_amount = pos1.instructions[0]
+            .definition
+            .inputs
+            .get("lock_amount")
+            .expect("lock_amount input");
+        assert_eq!(lock_amount.r#type, DynSolType::Uint(256));
+        assert_eq!(
+            lock_amount.value,
+            DynSolValue::Uint(U256::from(100), 256),
+            "amount=100 should parse as uint256"
+        );
+
+        // Position 2: weeks = 52, amount = 999999
         let pos2 = &root.positions[1];
-        let lock_input2 = pos2.instructions[0]
+        let lock_epochs2 = pos2.instructions[0]
             .definition
             .inputs
             .get("lock_epochs")
             .expect("lock_epochs input");
         assert_eq!(
-            lock_input2.value,
+            lock_epochs2.value,
             DynSolValue::Uint(U256::from(52), 32),
             "weeks=52 should parse as uint32"
+        );
+
+        let lock_amount2 = pos2.instructions[0]
+            .definition
+            .inputs
+            .get("lock_amount")
+            .expect("lock_amount input");
+        assert_eq!(lock_amount2.r#type, DynSolType::Uint(256));
+        assert_eq!(
+            lock_amount2.value,
+            DynSolValue::Uint(U256::from(999999), 256),
+            "amount=999999 should parse as uint256"
         );
     }
 

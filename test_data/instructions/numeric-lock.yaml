@@ -17,3 +17,6 @@
       lock_epochs:
         type: "uint32"
         value: ${position.weeks}
+      lock_amount:
+        type: "uint256"
+        value: ${position.amount}

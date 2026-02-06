@@ -5,16 +5,20 @@ inputs:
     type: "address"
   lock_epochs:
     type: "uint32"
+  lock_amount:
+    type: "uint256"
 
 actions:
   lock:
     calls:
       - description: "Lock tokens for N epochs"
         target: ${inputs.target_addr}
-        selector: "lock(uint32)"
+        selector: "lock(uint32,uint256)"
         parameters:
           - type: "uint32"
             value: ${inputs.lock_epochs}
+          - type: "uint256"
+            value: ${inputs.lock_amount}
         return:
           name: "lock_balance"
           type: "uint256"

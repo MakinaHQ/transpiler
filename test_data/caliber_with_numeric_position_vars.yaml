@@ -1,4 +1,4 @@
-# Test caliber that uses numeric position vars (uint32).
+# Test caliber that uses numeric position vars (uint32, uint256).
 # Regression test: Yaml::scalar_from_string("1") produces Integer(1),
 # which must be handled when parsing into uint/int sol types.
 
@@ -8,6 +8,7 @@ positions:
     description: "1-week lock"
     vars:
       weeks: "1"
+      amount: "100"
       share_token_address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
       lock_label: "1w-lock"
     instructions: !include "./instructions/numeric-lock.yaml"
@@ -17,6 +18,7 @@ positions:
     description: "52-week lock"
     vars:
       weeks: "52"
+      amount: "999999"
       share_token_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
       lock_label: "52w-lock"
     instructions: !include "./instructions/numeric-lock.yaml"
