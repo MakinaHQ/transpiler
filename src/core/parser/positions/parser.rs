@@ -932,7 +932,7 @@ impl Parser for PositionParser {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::address;
+    use alloy::{dyn_abi::DynSolValue, primitives::address};
 
     use crate::core::parser::common::ParserError;
 
@@ -1150,6 +1150,72 @@ mod tests {
         // Verify that tokens from token_list are included in the output
         assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
         assert!(root.tokens.contains_key("${token_list.mainnet.DETH}"));
+    }
+
+    #[test]
+    fn test_numeric_position_vars() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_with_numeric_position_vars.yaml"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let root = parser.parse().unwrap();
+
+        assert_eq!(root.positions.len(), 2);
+
+        // Position 1: weeks = 1, amount = 100
+        let pos1 = &root.positions[0];
+        assert_eq!(pos1.instructions.len(), 1);
+        let lock_epochs = pos1.instructions[0]
+            .definition
+            .inputs
+            .get("lock_epochs")
+            .expect("lock_epochs input");
+        assert_eq!(lock_epochs.r#type, DynSolType::Uint(32));
+        assert_eq!(
+            lock_epochs.value,
+            DynSolValue::Uint(U256::from(1), 32),
+            "weeks=1 should parse as uint32"
+        );
+
+        let lock_amount = pos1.instructions[0]
+            .definition
+            .inputs
+            .get("lock_amount")
+            .expect("lock_amount input");
+        assert_eq!(lock_amount.r#type, DynSolType::Uint(256));
+        assert_eq!(
+            lock_amount.value,
+            DynSolValue::Uint(U256::from(100), 256),
+            "amount=100 should parse as uint256"
+        );
+
+        // Position 2: weeks = 52, amount = 999999
+        let pos2 = &root.positions[1];
+        let lock_epochs2 = pos2.instructions[0]
+            .definition
+            .inputs
+            .get("lock_epochs")
+            .expect("lock_epochs input");
+        assert_eq!(
+            lock_epochs2.value,
+            DynSolValue::Uint(U256::from(52), 32),
+            "weeks=52 should parse as uint32"
+        );
+
+        let lock_amount2 = pos2.instructions[0]
+            .definition
+            .inputs
+            .get("lock_amount")
+            .expect("lock_amount input");
+        assert_eq!(lock_amount2.r#type, DynSolType::Uint(256));
+        assert_eq!(
+            lock_amount2.value,
+            DynSolValue::Uint(U256::from(999999), 256),
+            "amount=999999 should parse as uint256"
+        );
     }
 
     #[test]
