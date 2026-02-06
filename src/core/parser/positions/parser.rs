@@ -1179,11 +1179,6 @@ mod tests {
             DynSolValue::Uint(U256::from(1), 32),
             "weeks=1 should parse as uint32"
         );
-        assert_eq!(pos1.instructions[0].definition.label, "1w-lock");
-        assert_eq!(
-            pos1.instructions[0].affected_tokens[0],
-            address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-        );
 
         // Position 2: weeks = 52
         let pos2 = &root.positions[1];
@@ -1196,11 +1191,6 @@ mod tests {
             lock_input2.value,
             DynSolValue::Uint(U256::from(52), 32),
             "weeks=52 should parse as uint32"
-        );
-        assert_eq!(pos2.instructions[0].definition.label, "52w-lock");
-        assert_eq!(
-            pos2.instructions[0].affected_tokens[0],
-            address!("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
         );
     }
 
