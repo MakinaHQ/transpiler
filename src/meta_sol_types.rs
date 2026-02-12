@@ -1031,7 +1031,8 @@ mod tests {
 
     #[test]
     fn test_fluid_claim_data_property_order() {
-        // Verify the property order matches the Solidity function signature
+        // Verify the property order matches the Solidity function signature:
+        // claimRewards(address recipient, uint256 cumulative_amount, uint8 position_type, bytes32 position_id, uint256 cycle, bytes32[] merkle_proof, bytes metadata)
         let def = FluidClaimDataDef;
         let properties = def.properties();
 
