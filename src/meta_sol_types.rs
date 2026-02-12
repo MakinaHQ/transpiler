@@ -276,6 +276,17 @@ define_meta_types! {
             ("merkle_proof", DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))),
         ]
     },
+    FluidClaimData(FluidClaimDataDef) {
+        properties: [
+            ("recipient", DynSolType::Address),
+            ("cumulative_amount", DynSolType::Uint(256)),
+            ("position_type", DynSolType::Uint(8)),
+            ("position_id", DynSolType::FixedBytes(32)),
+            ("cycle", DynSolType::Uint(256)),
+            ("merkle_proof", DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))),
+            ("metadata", DynSolType::Bytes),
+        ]
+    },
 }
 
 #[cfg(test)]
@@ -290,6 +301,7 @@ mod tests {
         assert!(MetaDynSolType::from_name("MerklClaimData").is_some());
         assert!(MetaDynSolType::from_name("FxSaveData").is_some());
         assert!(MetaDynSolType::from_name("KingClaimData").is_some());
+        assert!(MetaDynSolType::from_name("FluidClaimData").is_some());
         assert!(MetaDynSolType::from_name("NonExistent").is_none());
     }
 
@@ -316,6 +328,10 @@ mod tests {
             MetaDynSolType::KingClaimData(KingClaimDataDef).name(),
             "KingClaimData"
         );
+        assert_eq!(
+            MetaDynSolType::FluidClaimData(FluidClaimDataDef).name(),
+            "FluidClaimData"
+        );
     }
 
     #[test]
@@ -339,6 +355,7 @@ mod tests {
         assert_eq!(MerklClaimDataDef.properties().len(), 4);
         assert_eq!(FxSaveDataDef.properties().len(), 4);
         assert_eq!(KingClaimDataDef.properties().len(), 4);
+        assert_eq!(FluidClaimDataDef.properties().len(), 7);
     }
 
     #[test]
@@ -479,6 +496,7 @@ mod tests {
         assert_eq!(MerklClaimDataDef.name(), "MerklClaimData");
         assert_eq!(FxSaveDataDef.name(), "FxSaveData");
         assert_eq!(KingClaimDataDef.name(), "KingClaimData");
+        assert_eq!(FluidClaimDataDef.name(), "FluidClaimData");
     }
 
     #[test]
@@ -726,5 +744,308 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert!(result.contains_key("guy"));
         assert!(result.contains_key("amount"));
+    }
+
+    // ==================== FluidClaimData Tests ====================
+
+    #[test]
+    fn test_fluid_claim_data_from_str() {
+        let result: Result<MetaDynSolType, _> = "FluidClaimData".parse();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name(), "FluidClaimData");
+    }
+
+    #[test]
+    fn test_fluid_claim_data_properties() {
+        let def = FluidClaimDataDef;
+        let properties = def.properties();
+
+        assert_eq!(properties.len(), 7);
+
+        // Check property names
+        let prop_names: Vec<&str> = properties.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(prop_names.contains(&"recipient"));
+        assert!(prop_names.contains(&"cumulative_amount"));
+        assert!(prop_names.contains(&"position_type"));
+        assert!(prop_names.contains(&"position_id"));
+        assert!(prop_names.contains(&"cycle"));
+        assert!(prop_names.contains(&"merkle_proof"));
+        assert!(prop_names.contains(&"metadata"));
+
+        // Check property types
+        let prop_map = def.property_map();
+        assert_eq!(prop_map.get("recipient"), Some(&DynSolType::Address));
+        assert_eq!(
+            prop_map.get("cumulative_amount"),
+            Some(&DynSolType::Uint(256))
+        );
+        assert_eq!(prop_map.get("position_type"), Some(&DynSolType::Uint(8)));
+        assert_eq!(
+            prop_map.get("position_id"),
+            Some(&DynSolType::FixedBytes(32))
+        );
+        assert_eq!(prop_map.get("cycle"), Some(&DynSolType::Uint(256)));
+        assert_eq!(
+            prop_map.get("merkle_proof"),
+            Some(&DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
+        );
+        assert_eq!(prop_map.get("metadata"), Some(&DynSolType::Bytes));
+    }
+
+    #[test]
+    fn test_fluid_claim_data_to_dyn_sol_type() {
+        let def = FluidClaimDataDef;
+        let sol_type = def.to_dyn_sol_type();
+
+        match sol_type {
+            DynSolType::CustomStruct {
+                name,
+                prop_names,
+                tuple,
+            } => {
+                assert_eq!(name, "FluidClaimData");
+                assert_eq!(prop_names.len(), 7);
+                assert_eq!(tuple.len(), 7);
+                assert_eq!(prop_names[0], "recipient");
+                assert_eq!(prop_names[1], "cumulative_amount");
+                assert_eq!(prop_names[2], "position_type");
+                assert_eq!(prop_names[3], "position_id");
+                assert_eq!(prop_names[4], "cycle");
+                assert_eq!(prop_names[5], "merkle_proof");
+                assert_eq!(prop_names[6], "metadata");
+            }
+            _ => panic!("Expected CustomStruct"),
+        }
+    }
+
+    #[test]
+    fn test_fluid_claim_data_default_property_map() {
+        let props = FluidClaimDataDef.property_map();
+        // Should contain all 7 properties (no property_map override)
+        assert_eq!(props.len(), 7);
+        assert!(props.contains_key("recipient"));
+        assert!(props.contains_key("cumulative_amount"));
+        assert!(props.contains_key("position_type"));
+        assert!(props.contains_key("position_id"));
+        assert!(props.contains_key("cycle"));
+        assert!(props.contains_key("merkle_proof"));
+        assert!(props.contains_key("metadata"));
+    }
+
+    #[test]
+    fn test_fluid_claim_data_create_value() {
+        use alloy::primitives::{Address, FixedBytes, U256};
+
+        let mut values = HashMap::new();
+        values.insert("recipient".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "cumulative_amount".to_string(),
+            DynSolValue::Uint(U256::from(1000000000000000000u64), 256),
+        );
+        values.insert(
+            "position_type".to_string(),
+            DynSolValue::Uint(U256::from(1), 8),
+        );
+        values.insert(
+            "position_id".to_string(),
+            DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32),
+        );
+        values.insert("cycle".to_string(), DynSolValue::Uint(U256::from(42), 256));
+        values.insert(
+            "merkle_proof".to_string(),
+            DynSolValue::Array(vec![
+                DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32),
+                DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32),
+            ]),
+        );
+        values.insert("metadata".to_string(), DynSolValue::Bytes(vec![]));
+
+        let result = FluidClaimDataDef.create_value(values).unwrap();
+
+        match result {
+            DynSolValue::CustomStruct {
+                name,
+                prop_names,
+                tuple,
+            } => {
+                assert_eq!(name, "FluidClaimData");
+                assert_eq!(prop_names.len(), 7);
+                assert_eq!(tuple.len(), 7);
+            }
+            _ => panic!("Expected CustomStruct"),
+        }
+    }
+
+    #[test]
+    fn test_fluid_claim_data_create_value_via_enum() {
+        use alloy::primitives::{Address, FixedBytes, U256};
+
+        let meta_type = MetaDynSolType::FluidClaimData(FluidClaimDataDef);
+
+        let mut values = HashMap::new();
+        values.insert("recipient".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "cumulative_amount".to_string(),
+            DynSolValue::Uint(U256::from(1000000000000000000u64), 256),
+        );
+        values.insert(
+            "position_type".to_string(),
+            DynSolValue::Uint(U256::from(1), 8),
+        );
+        values.insert(
+            "position_id".to_string(),
+            DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32),
+        );
+        values.insert("cycle".to_string(), DynSolValue::Uint(U256::from(42), 256));
+        values.insert("merkle_proof".to_string(), DynSolValue::Array(vec![]));
+        values.insert("metadata".to_string(), DynSolValue::Bytes(vec![]));
+
+        let result = meta_type.create_value(values).unwrap();
+
+        match result {
+            DynSolValue::CustomStruct { name, .. } => {
+                assert_eq!(name, "FluidClaimData");
+            }
+            _ => panic!("Expected CustomStruct"),
+        }
+    }
+
+    #[test]
+    fn test_fluid_claim_data_create_value_missing_field() {
+        use alloy::primitives::{Address, U256};
+
+        let mut values = HashMap::new();
+        values.insert("recipient".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "cumulative_amount".to_string(),
+            DynSolValue::Uint(U256::from(1000), 256),
+        );
+        // Missing other fields
+
+        let result = FluidClaimDataDef.create_value(values);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Missing field: position_type");
+    }
+
+    #[test]
+    fn test_fluid_claim_data_encode_values() {
+        use alloy::primitives::{Address, FixedBytes, U256};
+
+        let mut values = HashMap::new();
+        values.insert("recipient".to_string(), DynSolValue::Address(Address::ZERO));
+        values.insert(
+            "cumulative_amount".to_string(),
+            DynSolValue::Uint(U256::from(1000000000000000000u64), 256),
+        );
+        values.insert(
+            "position_type".to_string(),
+            DynSolValue::Uint(U256::from(1), 8),
+        );
+        values.insert(
+            "position_id".to_string(),
+            DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32),
+        );
+        values.insert("cycle".to_string(), DynSolValue::Uint(U256::from(42), 256));
+        values.insert(
+            "merkle_proof".to_string(),
+            DynSolValue::Array(vec![DynSolValue::FixedBytes(FixedBytes::<32>::ZERO, 32)]),
+        );
+        values.insert("metadata".to_string(), DynSolValue::Bytes(vec![0x01, 0x02]));
+
+        let result = FluidClaimDataDef.encode_values(values).unwrap();
+
+        assert_eq!(result.len(), 7);
+        assert!(result.contains_key("recipient"));
+        assert!(result.contains_key("cumulative_amount"));
+        assert!(result.contains_key("position_type"));
+        assert!(result.contains_key("position_id"));
+        assert!(result.contains_key("cycle"));
+        assert!(result.contains_key("merkle_proof"));
+        assert!(result.contains_key("metadata"));
+
+        // Static types (address, uint256, uint8, bytes32) are 32 bytes each
+        assert_eq!(result.get("recipient").unwrap().len(), 32);
+        assert_eq!(result.get("cumulative_amount").unwrap().len(), 32);
+        assert_eq!(result.get("position_type").unwrap().len(), 32);
+        assert_eq!(result.get("position_id").unwrap().len(), 32);
+        assert_eq!(result.get("cycle").unwrap().len(), 32);
+
+        // Dynamic types have offset stripped
+        // merkle_proof with 1 element: 32 (length) + 32 (element) = 64 bytes
+        assert_eq!(result.get("merkle_proof").unwrap().len(), 64);
+        // metadata with 2 bytes: 32 (length) + 32 (padded data) = 64 bytes
+        assert_eq!(result.get("metadata").unwrap().len(), 64);
+    }
+
+    #[test]
+    fn test_fluid_claim_data_display() {
+        let fluid = MetaDynSolType::FluidClaimData(FluidClaimDataDef);
+        assert_eq!(format!("{}", fluid), "FluidClaimData");
+    }
+
+    #[test]
+    fn test_fluid_claim_data_debug() {
+        let fluid = MetaDynSolType::FluidClaimData(FluidClaimDataDef);
+        assert_eq!(format!("{:?}", fluid), "FluidClaimData");
+    }
+
+    #[test]
+    fn test_fluid_claim_data_clone_eq_hash() {
+        let fluid1 = MetaDynSolType::FluidClaimData(FluidClaimDataDef);
+        let fluid2 = fluid1.clone();
+        assert_eq!(fluid1, fluid2);
+
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(fluid1.clone());
+        assert!(set.contains(&fluid2));
+
+        // Test inequality with other types
+        let king = MetaDynSolType::KingClaimData(KingClaimDataDef);
+        assert_ne!(fluid1, king);
+    }
+
+    #[test]
+    fn test_fluid_claim_data_merkle_proof_array_type() {
+        let props = FluidClaimDataDef.properties();
+        let prop_map: HashMap<_, _> = props.into_iter().collect();
+
+        // Check merkle_proof is bytes32[]
+        let merkle_proof_type = prop_map.get("merkle_proof").unwrap();
+        match merkle_proof_type {
+            DynSolType::Array(inner) => {
+                assert_eq!(**inner, DynSolType::FixedBytes(32));
+            }
+            _ => panic!("Expected array for merkle_proof"),
+        }
+    }
+
+    #[test]
+    fn test_fluid_claim_data_position_type_is_uint8() {
+        let props = FluidClaimDataDef.properties();
+        let prop_map: HashMap<_, _> = props.into_iter().collect();
+
+        // position_type should be uint8, not uint256
+        assert_eq!(prop_map.get("position_type"), Some(&DynSolType::Uint(8)));
+    }
+
+    #[test]
+    fn test_fluid_claim_data_property_order() {
+        // Verify the property order matches the Solidity function signature
+        let def = FluidClaimDataDef;
+        let properties = def.properties();
+
+        let expected_order = vec![
+            "recipient",
+            "cumulative_amount",
+            "position_type",
+            "position_id",
+            "cycle",
+            "merkle_proof",
+            "metadata",
+        ];
+
+        let actual_order: Vec<&str> = properties.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(actual_order, expected_order);
     }
 }
