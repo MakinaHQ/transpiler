@@ -40,6 +40,11 @@ pub struct Cli {
     /// Required if instructions refer to `token_list`.
     #[arg(short, long)]
     pub token_list: Option<PathBuf>,
+
+    /// Path to the json helpers list.
+    /// Required if instructions refer to `helpers`.
+    #[arg(long)]
+    pub helpers: Option<PathBuf>,
 }
 
 impl Cli {

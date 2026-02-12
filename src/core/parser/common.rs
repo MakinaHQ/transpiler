@@ -63,6 +63,10 @@ impl ParserError {
         self.third_msg = Some(msg.into());
         self
     }
+
+    pub fn msg(&self) -> &str {
+        &self.msg
+    }
 }
 
 /// A parsed template string
@@ -96,7 +100,7 @@ pub trait Parser {
             .as_mapping_get("value")
             .ok_or(self.error(field.span, "'value' is missing"))?;
 
-        let value = parse_sol_value_marked(&r#type, value_field).ok_or(
+        let value = parse_sol_value_marked(&r#type, value_field, self.named_source())?.ok_or(
             self.error(value_field, "could not be parsed")
                 .with_second_location(r#type.span, "into specified type"),
         )?;

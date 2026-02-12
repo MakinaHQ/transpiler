@@ -1,0 +1,22 @@
+# Instruction template that uses numeric position vars (uint32, uint256).
+# This exercises the code path where Yaml::scalar_from_string produces
+# an Integer variant instead of a String, which must be handled by
+# the sol_types parser.
+
+- is_debt: false
+  instruction_type: "ACCOUNTING"
+  affected_tokens:
+    - ${position.share_token_address}
+  instruction:
+    label: ${position.lock_label}
+    path: "./blueprints/lock.yaml:lock"
+    inputs:
+      target_addr:
+        type: "address"
+        value: ${position.share_token_address}
+      lock_epochs:
+        type: "uint32"
+        value: ${position.weeks}
+      lock_amount:
+        type: "uint256"
+        value: ${position.amount}

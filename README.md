@@ -26,10 +26,16 @@ When using token lists:
 cargo run -p transpiler -- -i input.yaml -o rootfile.toml -t token_list.json
 ```
 
+When using helper contracts:
+
+```bash
+cargo run -p transpiler -- -i input.yaml -o rootfile.toml -h helpers.json
+```
+
 Example with test data:
 
 ```bash
-cargo run -p transpiler -- -i test_data/caliber.yaml -o output.toml -t test_data/token_lists/test.json
+cargo run -p transpiler -- -i test_data/caliber.yaml -o output.toml -t test_data/token_lists/test.json -h test_data/helpers_list/helpers.json
 ```
 
 ## DSL Format
@@ -40,5 +46,14 @@ Input files use a YAML-based domain-specific language with:
 - **Positions**: Individual position definitions with management/accounting instructions
 - **Blueprints**: Reusable templates via `!include` directives
 - **Parameters**: Type-safe inputs with address, uint256, and other Solidity types
+
+### Template Variables
+
+The transpiler supports template variables that can be used throughout YAML files:
+
+- `${config.<name>}` - Reference config values
+- `${token_list.<chain>.<symbol>}` - Reference token addresses from a token list
+- `${helpers.<chain>.<name>}` - Reference helper contract addresses from a helpers list
+- `${position.<var>}` - Reference position-level variables
 
 The transpiler outputs TOML rootfiles that can be used to interact with the caliber contracts.

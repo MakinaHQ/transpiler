@@ -3,6 +3,7 @@ pub mod cli;
 pub mod core;
 pub mod errors;
 pub mod etherscan;
+pub mod helpers_list;
 pub mod merkletree;
 pub mod meta_sol_types;
 pub mod token_list;
@@ -22,6 +23,31 @@ use crate::errors::Result;
 use crate::types::Rootfile;
 
 pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
+    match cli.command() {
+        Command::Transpile => {
+            let (_, rootfile) = parse_input_files(cli)?;
+            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
+        }
+        Command::Check { github_errors } => {
+            let (parsed, _) = parse_input_files(cli)?;
+            let check = Check::new(cli.input_file.clone(), parsed, github_errors);
+            check
+                .all_addresses_verified()
+                .await
+                .map_err(|err| miette!("{}", err))
+        }
+        Command::Root => {
+            let (_, rootfile) = parse_input_files(cli)?;
+            println!("calculated root: {}", rootfile.root());
+            Ok(())
+        }
+    }
+}
+
+/// Parse and validate input files, returning the parsed positions and rootfile.
+fn parse_input_files(
+    cli: &cli::Cli,
+) -> miette::Result<(core::parser::positions::types::Root, Rootfile)> {
     if !cli.input_file.is_file() {
         return Err(Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -30,7 +56,6 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .map_err(|err| miette!("{}", err));
     }
 
-    // verify the token list path exists, if provided
     if let Some(token_list_path) = &cli.token_list
         && !token_list_path.is_file()
     {
@@ -41,35 +66,41 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
         .map_err(|err| miette!("{}", err));
     }
 
-    let parsed = PositionParser::new(cli.input_file.clone(), cli.token_list.clone())?
-        .parse()
-        .map_err(|err| miette!("{:?}", err))?;
+    // verify the helpers list path exists, if provided
+    if let Some(helpers_path) = &cli.helpers
+        && !helpers_path.is_file()
+    {
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("helpers list file {} not found", helpers_path.display()),
+        )))
+        .map_err(|err| miette!("{}", err));
+    }
+
+    let parsed = PositionParser::new(
+        cli.input_file.clone(),
+        cli.token_list.clone(),
+        cli.helpers.clone(),
+    )?
+    .parse()
+    .map_err(|err| miette!("{:?}", err))?;
 
     let rootfile = get_rootfile_from_positions(&parsed.positions, &parsed.tokens)
         .map_err(|err| miette!("{:?}", err))?;
 
-    match cli.command() {
-        Command::Transpile => {
-            write_rootfile(&rootfile, &cli.output_file).map_err(|err| miette!("{}", err))
-        }
-        Command::Check { github_errors } => {
-            let check = Check::new(cli.input_file.clone(), parsed, github_errors);
-            check
-                .all_addresses_verified()
-                .await
-                .map_err(|err| miette!("{}", err))
-        }
-        Command::Root => {
-            println!("calculated root: {}", rootfile.root());
-            Ok(())
-        }
-    }
+    Ok((parsed, rootfile))
 }
 
 /// Writes formatted rootfile to path
 fn write_rootfile(content: &Rootfile, out: &PathBuf) -> Result<()> {
     if let Some(parent) = out.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| {
+            eyre!(
+                "Failed to create output directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
 
     let text = toml::to_string_pretty(content)?;

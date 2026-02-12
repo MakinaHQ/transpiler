@@ -480,10 +480,11 @@ impl BlueprintParser {
         // if value is not a template string
         // try parsing as raw value and return the result
         if !self.is_template(value_field) {
-            let value = parse_sol_value_marked(&r#type, value_field).ok_or_else(|| {
-                self.error(value_field, "could not be parsed")
-                    .with_second_location(r#type.span, "into specified type")
-            })?;
+            let value = parse_sol_value_marked(&r#type, value_field, self.named_source())?
+                .ok_or_else(|| {
+                    self.error(value_field, "could not be parsed")
+                        .with_second_location(r#type.span, "into specified type")
+                })?;
 
             return Ok(BlueprintTemplate::Raw(YamlSolValue {
                 r#type: r#type.inner,
@@ -598,14 +599,11 @@ impl BlueprintParser {
     ) -> miette::Result<BlueprintInput> {
         let r#type = self.get_type(field, "type")?;
 
-        // https://github.com/MakinaHQ/transpiler/blob/4632a90810dc0598077e4e7c8eb64c1a0bcba428/src/core/parser/blueprint/parser.rs#L292-L301
-        //
-        // this does not match the original implementation (linked above)
-        // which i believe is broken because Bytes & String are not a scalar type
-        // but allowed above
-        //
-        // we want to allow custom structs because they are used for the dynamic types
-        if r#type.is_dynamic() && !r#type.has_custom_struct() {
+        // Reject complex dynamic types (arrays, tuples) but allow:
+        // - Bytes and String (dynamic but valid as inputs)
+        // - CustomStructs (used for meta types like SwapData)
+        let is_allowed_dynamic = matches!(r#type.inner, DynSolType::Bytes | DynSolType::String);
+        if r#type.is_dynamic() && !r#type.has_custom_struct() && !is_allowed_dynamic {
             return Err(self.error(r#type.span, "must be scalar type"))?;
         }
 
