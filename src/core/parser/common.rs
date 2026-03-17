@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, sync::OnceLock};
 
 use alloy::dyn_abi::DynSolType;
 use miette::{Diagnostic, NamedSource, SourceSpan};
@@ -76,12 +76,23 @@ pub struct TemplateRef<'a> {
     pub child: Option<Marked<&'a str>>,
 }
 
+const TEMPLATE_REGEX_PATTERN: &str = r"^\$\{([^.{}]+)\.([^.{}]+)(?:\.([^.{}]+))?\}$";
+
+pub fn template_regex() -> &'static Regex {
+    static TEMPLATE_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    TEMPLATE_REGEX
+        .get_or_init(|| Regex::new(TEMPLATE_REGEX_PATTERN).expect("template regex is valid"))
+}
+
 pub trait Parser {
     /// Return [NamedSource] for this parser
     fn named_source(&self) -> NamedSource<String>;
 
     /// Return the [Regex] used for template parsing
-    fn template_regex(&self) -> &Regex;
+    fn template_regex(&self) -> &Regex {
+        template_regex()
+    }
 
     /// Helper method to generate a [ParserError] referencing this parsers source
     fn error<S, Str>(&self, span: S, msg: Str) -> ParserError
@@ -265,5 +276,25 @@ impl From<ErrorSpan> for SourceSpan {
         let start = span.inner.start.index();
         let offset = span.inner.end.index() - start;
         (start, offset).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::template_regex;
+
+    #[test]
+    fn test_template_regex_matches_special_characters() {
+        assert!(template_regex().is_match("${token_list.arbitrum.USD₮0}"));
+    }
+
+    #[test]
+    fn test_template_regex_requires_full_string_match() {
+        assert!(!template_regex().is_match("prefix ${token_list.arbitrum.USD₮0}"));
+    }
+
+    #[test]
+    fn test_template_regex_rejects_empty_trailing_segment() {
+        assert!(!template_regex().is_match("${token_list.arbitrum.}"));
     }
 }

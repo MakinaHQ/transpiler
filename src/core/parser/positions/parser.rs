@@ -10,7 +10,6 @@ use alloy::{
     primitives::{Address, U256},
 };
 use miette::{NamedSource, miette};
-use regex::Regex;
 use saphyr::{LoadableYamlNode, MarkedYaml, Marker};
 use saphyr_parser::Span;
 
@@ -35,7 +34,6 @@ pub struct PositionParser {
     token_list: TokenList,
     helpers_list: HelpersList,
     _source: String,
-    template_regex: Regex,
     source_with_includes: String,
 }
 
@@ -80,7 +78,6 @@ impl PositionParser {
             token_list,
             helpers_list,
             _source: source,
-            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").expect("is valid regex"),
             source_with_includes: content,
         })
     }
@@ -924,10 +921,6 @@ impl Parser for PositionParser {
             self.source_with_includes.clone(),
         )
     }
-
-    fn template_regex(&self) -> &Regex {
-        &self.template_regex
-    }
 }
 
 #[cfg(test)]
@@ -1150,6 +1143,36 @@ mod tests {
         // Verify that tokens from token_list are included in the output
         assert!(root.tokens.contains_key("${token_list.mainnet.DUSD}"));
         assert!(root.tokens.contains_key("${token_list.mainnet.DETH}"));
+    }
+
+    #[test]
+    fn test_position_vars_with_special_character_token_list() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_with_special_token_list_vars.yaml"),
+            Some(PathBuf::from(
+                "test_data/token_lists/test_special_symbol.json",
+            )),
+            None,
+        )
+        .unwrap();
+
+        let root = parser.parse().unwrap();
+
+        assert_eq!(root.positions.len(), 1);
+
+        let deposit_instr = &root.positions[0].instructions[0];
+        assert_eq!(
+            deposit_instr.affected_tokens[0],
+            address!("0xBEEF00000000000000000000000000000000BEEF")
+        );
+
+        let token_input = deposit_instr.definition.inputs.get("token").unwrap();
+        assert_eq!(
+            token_input.value.as_address().unwrap(),
+            address!("0xBEEF00000000000000000000000000000000BEEF")
+        );
+
+        assert!(root.tokens.contains_key("${token_list.arbitrum.USD₮0}"));
     }
 
     #[test]

@@ -1,0 +1,17 @@
+# Example caliber config that demonstrates token_list references with special
+# characters in the token symbol.
+
+config:
+  caliber_address:
+    type: "address"
+    value: "0xd1da9924c8ea15a8e35951b4702aa4937a9dd70a"
+
+positions:
+  - id: "241963968685402655309198654686298022078"
+    group_id: "0"
+    description: "Deposit USD₮0"
+    vars:
+      token_address: ${token_list.arbitrum.USD₮0}
+      aave_token_address: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8"
+      vault_label: "usdte0"
+    instructions: !include "./instructions/generic-deposit.yaml"

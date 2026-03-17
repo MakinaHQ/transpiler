@@ -10,7 +10,6 @@ use alloy::{
 };
 use indexmap::IndexMap;
 use miette::{NamedSource, miette};
-use regex::Regex;
 use saphyr::{LoadableYamlNode, MarkedYaml};
 
 use crate::{
@@ -30,7 +29,6 @@ use crate::{
 pub struct BlueprintParser {
     file: PathBuf,
     source: String,
-    template_regex: Regex,
 }
 
 impl BlueprintParser {
@@ -38,8 +36,6 @@ impl BlueprintParser {
     where
         P: Into<PathBuf>,
     {
-        let template_regex = Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").expect("is valid regex");
-
         let file = file.into();
         let content = std::fs::read_to_string(&file)
             .map_err(|err| miette!("could not open blueprint: {}", err))?;
@@ -47,11 +43,7 @@ impl BlueprintParser {
         let source = helpers::replace_builtins(&content)
             .map_err(|err| miette!("could not replace builtins: {err}"))?;
 
-        Ok(Self {
-            file,
-            source,
-            template_regex,
-        })
+        Ok(Self { file, source })
     }
 
     pub fn parse(&self) -> miette::Result<Blueprint> {
@@ -622,10 +614,6 @@ impl BlueprintParser {
 impl Parser for BlueprintParser {
     fn named_source(&self) -> NamedSource<String> {
         NamedSource::new(self.file.to_string_lossy(), self.source.clone())
-    }
-
-    fn template_regex(&self) -> &Regex {
-        &self.template_regex
     }
 }
 

@@ -1,0 +1,13 @@
+{
+    "name": "TEST-SPECIAL-SYMBOL-TOKEN-LIST",
+    "timestamp": "2026-03-17T00:00:00.000+00:00",
+    "tokens": [
+        {
+            "chainId": 42161,
+            "address": "0xBEEF00000000000000000000000000000000BEEF",
+            "name": "Tether USD",
+            "symbol": "USD₮0",
+            "decimals": 6
+        }
+    ]
+}
