@@ -1,9 +1,6 @@
 use std::{collections::HashMap, env, num::NonZero};
 
-use alloy::{
-    primitives::{Address, U256},
-    transports::http::reqwest,
-};
+use alloy::primitives::{Address, U256};
 use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
 use serde::{Deserialize, de::DeserializeOwned};
 
