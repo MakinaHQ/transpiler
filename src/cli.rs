@@ -45,6 +45,11 @@ pub struct Cli {
     /// Required if instructions refer to `helpers`.
     #[arg(long)]
     pub helpers: Option<PathBuf>,
+
+    /// Allow positions without accounting instructions for Makina Lite.
+    #[arg(long, global = true)]
+    #[clap(default_value_t = false)]
+    pub lite: bool,
 }
 
 impl Cli {

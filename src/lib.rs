@@ -82,6 +82,7 @@ fn parse_input_files(
         cli.token_list.clone(),
         cli.helpers.clone(),
     )?
+    .with_makina_lite(cli.lite)
     .parse()
     .map_err(|err| miette!("{:?}", err))?;
 

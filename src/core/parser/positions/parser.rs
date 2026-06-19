@@ -34,6 +34,7 @@ pub struct PositionParser {
     root_path: PathBuf,
     token_list: TokenList,
     helpers_list: HelpersList,
+    allow_missing_accounting: bool,
     _source: String,
     template_regex: Regex,
     source_with_includes: String,
@@ -79,10 +80,16 @@ impl PositionParser {
             root_path,
             token_list,
             helpers_list,
+            allow_missing_accounting: false,
             _source: source,
             template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").expect("is valid regex"),
             source_with_includes: content,
         })
+    }
+
+    pub fn with_makina_lite(mut self, makina_lite: bool) -> Self {
+        self.allow_missing_accounting = makina_lite;
+        self
     }
 
     /// Parse a position from a file.
@@ -275,17 +282,25 @@ impl PositionParser {
                     .filter(|inst| inst.instruction_type == InstructionType::Harvest)
                     .count();
 
-            if instructions
+            let accounting_count = instructions
                 .iter()
                 .filter(|inst| inst.instruction_type == InstructionType::Accounting)
-                .count()
-                != 1
-                && !is_harvest_only
-            {
+                .count();
+
+            if !self.allow_missing_accounting && accounting_count != 1 && !is_harvest_only {
                 return Err(self
                     .error(
                         position.span,
                         "position must have exactly one accounting instruction",
+                    )
+                    .into());
+            }
+
+            if self.allow_missing_accounting && accounting_count > 1 {
+                return Err(self
+                    .error(
+                        position.span,
+                        "Makina Lite position must have at most one accounting instruction",
                     )
                     .into());
             }
@@ -1096,6 +1111,40 @@ mod tests {
 
         let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
         assert!(err.msg().contains("exactly one accounting instruction"));
+    }
+
+    #[test]
+    fn test_makina_lite_position_without_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_without_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+            None,
+        )
+        .unwrap()
+        .with_makina_lite(true);
+
+        let root = parser.parse().unwrap();
+        assert_eq!(root.positions[0].instructions.len(), 1);
+        assert!(
+            root.positions[0]
+                .instructions
+                .iter()
+                .all(|inst| inst.instruction_type != InstructionType::Accounting)
+        );
+    }
+
+    #[test]
+    fn test_makina_lite_position_with_two_accounting_instructions() {
+        let parser = PositionParser::new(
+            PathBuf::from("test_data/caliber_two_accounting.yaml"),
+            Some(PathBuf::from("test_data/token_lists/test.json")),
+            None,
+        )
+        .unwrap()
+        .with_makina_lite(true);
+
+        let err: ParserError = parser.parse().unwrap_err().downcast().unwrap();
+        assert!(err.msg().contains("at most one accounting instruction"));
     }
 
     #[test]
