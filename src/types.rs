@@ -62,6 +62,8 @@ impl From<DynSolType> for InputSlotType {
 pub struct RootfileInputSlot {
     pub index: usize,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub r#type: InputSlotType,
     pub meta_type: Option<MetaTypeData>,
 }
@@ -264,7 +266,7 @@ impl Rootfile {
 
 #[cfg(test)]
 mod test {
-    use crate::types::Rootfile;
+    use crate::types::{InputSlotType, Rootfile, RootfileInputSlot};
 
     #[test]
     fn test_roundtrip_serde() {
@@ -273,5 +275,21 @@ mod test {
         let deserde: Rootfile = toml::from_str(empty).unwrap();
         assert_eq!(deserde, Rootfile::default());
         assert_eq!(toml::to_string(&deserde).unwrap(), empty);
+    }
+
+    #[test]
+    fn input_slot_description_is_backward_compatible() {
+        let legacy = "index = 0\nname = \"amount_in\"\ntype = \"Uint\"\n";
+
+        let mut slot: RootfileInputSlot = toml::from_str(legacy).unwrap();
+        assert_eq!(slot.description, None);
+        assert_eq!(toml::to_string(&slot).unwrap(), legacy);
+
+        slot.description = Some("Amount to deposit".into());
+        assert_eq!(
+            toml::to_string(&slot).unwrap(),
+            "index = 0\nname = \"amount_in\"\ndescription = \"Amount to deposit\"\ntype = \"Uint\"\n"
+        );
+        assert_eq!(slot.r#type, InputSlotType::Uint);
     }
 }
