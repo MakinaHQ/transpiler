@@ -413,6 +413,7 @@ fn transpile_input_slots(action: &BlueprintAction) -> Vec<RootfileInputSlot> {
             });
             RootfileInputSlot {
                 name: k.into(),
+                description: v.description.clone(),
                 r#type: v.r#type.clone().into(),
                 index: i + action.reserved_slots.len(),
                 meta_type: meta_type_data,
@@ -565,6 +566,10 @@ mod test {
         assert_eq!(m.inputs_slots.len(), 1);
         assert_eq!(m.inputs_slots[0].index, 0);
         assert_eq!(m.inputs_slots[0].name, "amount_in");
+        assert_eq!(
+            m.inputs_slots[0].description.as_deref(),
+            Some("The amount of tokens to add as collateral")
+        );
         assert!(matches!(m.inputs_slots[0].r#type, InputSlotType::Uint));
     }
 
