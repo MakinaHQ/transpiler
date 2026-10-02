@@ -11,7 +11,7 @@ pub mod types;
 
 use core::parser::positions::parser::PositionParser;
 use core::transpiler::get_rootfile_from_positions;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eyre::eyre;
 use miette::miette;
@@ -36,12 +36,24 @@ pub async fn run(cli: &cli::Cli) -> miette::Result<()> {
                 .await
                 .map_err(|err| miette!("{}", err))
         }
-        Command::Root => {
-            let (_, rootfile) = parse_input_files(cli)?;
-            println!("calculated root: {}", rootfile.root());
+        Command::Root { rootfile } => {
+            let rootfile = if let Some(path) = rootfile {
+                read_rootfile(&path)?
+            } else {
+                parse_input_files(cli)?.1
+            };
+            println!("{}", rootfile.root());
             Ok(())
         }
     }
+}
+
+fn read_rootfile(path: &Path) -> miette::Result<Rootfile> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|err| miette!("could not read rootfile {}: {}", path.display(), err))?;
+    content
+        .parse()
+        .map_err(|err| miette!("could not parse rootfile {}: {}", path.display(), err))
 }
 
 /// Parse and validate input files, returning the parsed positions and rootfile.
@@ -133,4 +145,31 @@ fn write_rootfile(content: &Rootfile, out: &PathBuf) -> Result<()> {
     println!("✅ Rootfile successfully transpiled to: {}", out.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use alloy::primitives::FixedBytes;
+
+    use super::read_rootfile;
+
+    #[test]
+    fn rootfile_comment_does_not_determine_root() {
+        let path = std::env::temp_dir().join(format!(
+            "transpiler-rootfile-test-{}.toml",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "# root: 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n[instructions]\n",
+        )
+        .unwrap();
+
+        let rootfile = read_rootfile(&path).unwrap();
+        fs::remove_file(path).unwrap();
+
+        assert_eq!(rootfile.root(), FixedBytes::<32>::ZERO);
+    }
 }

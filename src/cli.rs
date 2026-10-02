@@ -16,8 +16,12 @@ pub enum Command {
         #[clap(default_value_t = false)]
         github_errors: bool,
     },
-    /// Compute and print the root of the intput file
-    Root,
+    /// Compute and print the root of an input file
+    Root {
+        /// Path to an existing TOML rootfile.
+        #[arg(long)]
+        rootfile: Option<PathBuf>,
+    },
 }
 
 #[derive(Parser)]
@@ -55,5 +59,25 @@ pub struct Cli {
 impl Cli {
     pub fn command(&self) -> Command {
         self.command.clone().unwrap_or(Command::Transpile)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn root_accepts_a_rootfile() {
+        let cli =
+            Cli::try_parse_from(["transpiler", "root", "--rootfile", "rootfile.toml"]).unwrap();
+
+        assert_eq!(
+            cli.command(),
+            Command::Root {
+                rootfile: Some(PathBuf::from("rootfile.toml"))
+            }
+        );
     }
 }
