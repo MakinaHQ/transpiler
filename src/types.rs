@@ -65,7 +65,15 @@ pub struct RootfileInputSlot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub r#type: InputSlotType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<InputType>,
     pub meta_type: Option<MetaTypeData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputType {
+    Amount { token: Address },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -283,6 +291,7 @@ mod test {
 
         let mut slot: RootfileInputSlot = toml::from_str(legacy).unwrap();
         assert_eq!(slot.description, None);
+        assert_eq!(slot.input_type, None);
         assert_eq!(toml::to_string(&slot).unwrap(), legacy);
 
         slot.description = Some("Amount to deposit".into());
