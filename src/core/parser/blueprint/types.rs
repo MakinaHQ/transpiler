@@ -86,9 +86,15 @@ pub struct BlueprintInputSlot {
     pub name: String,
     pub r#type: DynSolType,
     pub description: Option<String>,
+    pub input_type: Option<BlueprintInputType>,
     pub meta_type: Option<MetaDynSolType>,
     pub meta_type_field: Option<String>,
     pub meta_type_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlueprintInputType {
+    Amount { token: BlueprintTarget },
 }
 
 #[derive(Debug, Clone, PartialEq)]

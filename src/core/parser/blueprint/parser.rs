@@ -6,7 +6,7 @@ use std::{
 
 use alloy::{
     dyn_abi::DynSolType,
-    primitives::{Selector, keccak256},
+    primitives::{Address, Selector, keccak256},
 };
 use indexmap::IndexMap;
 use miette::{NamedSource, miette};
@@ -17,8 +17,8 @@ use crate::{
     core::parser::{
         blueprint::{
             Blueprint, BlueprintAction, BlueprintCall, BlueprintInput, BlueprintInputSlot,
-            BlueprintParameter, BlueprintReservedSlot, BlueprintReturn, BlueprintTarget,
-            BlueprintValue, types::BlueprintTemplate,
+            BlueprintInputType, BlueprintParameter, BlueprintReservedSlot, BlueprintReturn,
+            BlueprintTarget, BlueprintValue, types::BlueprintTemplate,
         },
         common::{Marked, Parser},
         helpers,
@@ -184,7 +184,7 @@ impl BlueprintParser {
         field: &'a MarkedYaml<'a>,
         templates: &BTreeMap<String, BlueprintTemplate>,
     ) -> miette::Result<BlueprintAction> {
-        let input_slots = self.blueprint_input_slots(field)?;
+        let input_slots = self.blueprint_input_slots(field, templates)?;
         let mut templates = templates.clone();
         templates.append(
             &mut input_slots
@@ -223,6 +223,7 @@ impl BlueprintParser {
     fn blueprint_input_slots<'a>(
         &self,
         field: &'a MarkedYaml<'a>,
+        templates: &BTreeMap<String, BlueprintTemplate>,
     ) -> miette::Result<IndexMap<String, BlueprintInputSlot>> {
         let Some(input_slots) = field.data.as_mapping_get("input_slots") else {
             return Ok(IndexMap::new());
@@ -241,6 +242,7 @@ impl BlueprintParser {
                 .ok_or(self.error(key.span, "invalid name"))?;
 
             let input = self.blueprint_input(slot_name, value)?;
+            let input_type = self.blueprint_input_type(value, &input.r#type, templates)?;
 
             match input.r#type {
                 DynSolType::CustomStruct {
@@ -262,6 +264,7 @@ impl BlueprintParser {
                                 name: format!("{slot_name}.{prop_name}"),
                                 r#type: prop_type,
                                 description: input.description.to_owned(),
+                                input_type: input_type.clone(),
                                 meta_type: Some(meta_type.to_owned()),
                                 meta_type_field: Some(prop_name.clone()),
                                 meta_type_name: Some(slot_name.to_owned()),
@@ -276,6 +279,7 @@ impl BlueprintParser {
                             name: slot_name.to_string(),
                             r#type: input.r#type,
                             description: input.description,
+                            input_type,
                             meta_type: None,
                             meta_type_field: None,
                             meta_type_name: None,
@@ -286,6 +290,110 @@ impl BlueprintParser {
         }
 
         Ok(map)
+    }
+
+    fn blueprint_input_type<'a>(
+        &self,
+        field: &'a MarkedYaml<'a>,
+        slot_type: &DynSolType,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<Option<BlueprintInputType>> {
+        let Some(input_type) = field.data.as_mapping_get("input_type") else {
+            return Ok(None);
+        };
+
+        match slot_type {
+            DynSolType::Uint(_) => {}
+            _ => {
+                return Err(self
+                    .error(
+                        input_type.span,
+                        "input_type requires an unsigned integer slot",
+                    )
+                    .into());
+            }
+        }
+        let variants = input_type
+            .data
+            .as_mapping()
+            .ok_or(self.error(input_type.span, "input_type must be a mapping"))?;
+        if variants.len() != 1 {
+            return Err(self
+                .error(
+                    input_type.span,
+                    "input_type must contain exactly one 'amount' variant",
+                )
+                .into());
+        }
+
+        let (variant, config) = variants.iter().next().expect("checked one variant");
+        let variant_name = variant
+            .data
+            .as_str()
+            .ok_or(self.error(variant.span, "input_type variant must be a string"))?;
+        let config_map = config
+            .data
+            .as_mapping()
+            .ok_or(self.error(config.span, "input_type variant must be a mapping"))?;
+
+        let parsed = match variant_name {
+            "amount" => {
+                if config_map.len() != 1 || config.data.as_mapping_get("token").is_none() {
+                    return Err(self
+                        .error(config.span, "amount input_type requires only 'token'")
+                        .into());
+                }
+                let token = config.data.as_mapping_get("token").expect("checked token");
+                BlueprintInputType::Amount {
+                    token: self.input_type_token(token, templates)?,
+                }
+            }
+            _ => {
+                return Err(self
+                    .error(
+                        variant.span,
+                        "unknown input_type variant; expected 'amount'",
+                    )
+                    .into());
+            }
+        };
+
+        Ok(Some(parsed))
+    }
+
+    fn input_type_token<'a>(
+        &self,
+        field: &'a MarkedYaml<'a>,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<BlueprintTarget> {
+        if self.is_template(field) {
+            let template = self.parse_template_str(field)?;
+            if *template.source != "inputs" {
+                return Err(self
+                    .error(template.source, "amount token must reference an input")
+                    .into());
+            }
+            let key = field.data.as_str().expect("already parsed as template");
+            return match templates.get(key) {
+                Some(BlueprintTemplate::Input(input)) if input.r#type == DynSolType::Address => {
+                    Ok(BlueprintTarget::Input(input.name.clone()))
+                }
+                Some(_) => Err(self
+                    .error(field.span, "amount token input must have type address")
+                    .into()),
+                None => Err(self.error(template.name.span, "unknown input").into()),
+            };
+        }
+
+        let token = field
+            .data
+            .as_str()
+            .and_then(|value| Address::from_str(value).ok())
+            .ok_or(self.error(
+                field.span,
+                "amount token must be an address or input reference",
+            ))?;
+        Ok(BlueprintTarget::Address(token))
     }
 
     fn blueprint_calls<'a>(
@@ -631,12 +739,105 @@ impl Parser for BlueprintParser {
 
 #[cfg(test)]
 mod tests {
+    use regex::Regex;
+
+    use crate::core::parser::blueprint::BlueprintInputType;
+
     use super::BlueprintParser;
+
+    fn parse_input_type(slot_type: &str, input_type: &str) -> miette::Result<super::Blueprint> {
+        let source = format!(
+            r#"protocol: test
+inputs:
+  token:
+    type: address
+actions:
+  use:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "use(uint256)"
+        parameters:
+          - type: "{slot_type}"
+            value: ${{input_slots.value}}
+    input_slots:
+      value:
+        type: "{slot_type}"
+        input_type:
+{input_type}
+"#
+        );
+        BlueprintParser {
+            file: "input-type-test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+        .parse()
+    }
 
     #[test]
     fn test_smoke() {
         let parser = BlueprintParser::new("test_data/blueprints/account.yaml").unwrap();
 
         parser.parse().unwrap();
+    }
+
+    #[test]
+    fn parses_amount_token_as_input_reference_or_address() {
+        let referenced = parse_input_type(
+            "uint256",
+            "          amount:\n            token: ${inputs.token}",
+        )
+        .unwrap();
+        assert_eq!(
+            referenced.actions["use"].input_slots["value"].input_type,
+            Some(BlueprintInputType::Amount {
+                token: super::BlueprintTarget::Input("token".into()),
+            })
+        );
+
+        let addressed = parse_input_type(
+            "uint256",
+            "          amount:\n            token: \"0x0000000000000000000000000000000000000002\"",
+        )
+        .unwrap();
+        assert_eq!(
+            addressed.actions["use"].input_slots["value"].input_type,
+            Some(BlueprintInputType::Amount {
+                token: super::BlueprintTarget::Address(
+                    "0x0000000000000000000000000000000000000002"
+                        .parse()
+                        .unwrap()
+                ),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_input_types_and_references() {
+        let cases = [
+            (
+                "address",
+                "          amount:\n            token: ${inputs.token}",
+                "requires an unsigned integer slot",
+            ),
+            (
+                "uint256",
+                "          amount:\n            token: ${inputs.missing}",
+                "unknown input",
+            ),
+            (
+                "uint256",
+                "          currency:\n            symbol: USD",
+                "unknown input_type variant",
+            ),
+        ];
+
+        for (slot_type, input_type, expected) in cases {
+            let error = parse_input_type(slot_type, input_type).unwrap_err();
+            assert!(
+                format!("{error:?}").contains(expected),
+                "expected {expected:?} in {error:?}"
+            );
+        }
     }
 }

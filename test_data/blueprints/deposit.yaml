@@ -38,3 +38,6 @@ actions:
       amount_in:
         type: "uint256"
         description: "The amount of tokens to add as collateral"
+        input_type:
+          amount:
+            token: ${inputs.token}
