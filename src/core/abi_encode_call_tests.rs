@@ -144,3 +144,68 @@ fn test_abi_encode_call_runtime_splices_words() {
         assert_ne!(m.bitmap & (U128::from(1) << (127 - index)), U128::ZERO);
     }
 }
+
+/// `exec(bytes)` whose argument is `f(uint256 × n)` with every parameter a runtime value:
+/// |fc| length + (n + 1) words |fb| = n + 4 argument slots.
+fn runtime_call_with(n: usize) -> miette::Result<()> {
+    let params: String = (0..n)
+        .map(|_| "                  - type: \"uint256\"\n                    value: ${returns.v}\n")
+        .collect();
+    let types = vec!["uint256"; n].join(",");
+    let path =
+        std::env::temp_dir().join(format!("abi-encode-call-{n}-{}.yaml", std::process::id()));
+    std::fs::write(
+        &path,
+        format!(
+            r#"protocol: "test"
+actions:
+  run:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "v()"
+        parameters: []
+        return:
+          name: "v"
+          type: "uint256"
+      - target: "0x0000000000000000000000000000000000000002"
+        selector: "exec(bytes)"
+        parameters:
+          - type: "bytes"
+            value:
+              abi_encode_call:
+                selector: "f({types})"
+                math_helper: "0x3D623B199E290358416415eA7e05B635E442e3c0"
+                parameters:
+{params}"#
+        ),
+    )
+    .unwrap();
+    let inst = Instruction {
+        description: None,
+        is_debt: false,
+        affected_tokens: vec![],
+        instruction_type: InstructionType::Harvest,
+        definition: InstructionDefinition {
+            blueprint_path: path.clone(),
+            label: "test".into(),
+            name: "run".into(),
+            override_name: None,
+            inputs: HashMap::new(),
+        },
+    };
+    let result = transpile(&inst, U256::from(1), U256::ZERO, &[]).map(|_| ());
+    std::fs::remove_file(path).unwrap();
+    result
+}
+
+#[test]
+fn test_abi_encode_call_too_large_for_one_command_is_a_compile_error() {
+    // 28 runtime words + |fc| length |fb| = 32 slots: the most a weiroll command holds
+    runtime_call_with(28).unwrap();
+    // one more must fail at compile time instead of emitting a truncated command
+    let err = runtime_call_with(29).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("at most 32 argument slots"),
+        "{err:?}"
+    );
+}

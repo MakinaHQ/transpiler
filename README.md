@@ -90,8 +90,15 @@ a module of.
   - every parameter must be a one-word static type (`address`, `bool`, `uintN`, `intN`,
     `bytesN`);
   - runtime values must be passed directly, not nested;
-  - `math_helper` must implement `add`, `sub`, `mul` and `div` on `uint256` with checked
-    arithmetic and `sub(a, b) = a - b` (makina-periphery `MathHelper`). A helper with
-    reversed `sub` underflows and reverts rather than producing wrong calldata.
+  - `math_helper` must implement `add`, `sub`, `mul` and `div` on `uint256` with the usual
+    semantics, `sub(a, b) = a - b` (makina-periphery `MathHelper`). No operation can
+    overflow with such a helper, so checked arithmetic is not needed. A helper with reversed
+    `sub` reverts if its arithmetic is checked, and produces wrong calldata if it is not:
+    pin a known, immutable helper. Its address is a call target, so it is committed in the
+    leaf like any other.
+  - A weiroll command holds at most 32 argument slots. The bytes argument alone takes the
+    number of words + 3 (tuple start and end, length), so runtime-built calldata is limited
+    to about 28 words (≈ 27 parameters), minus the other arguments of the call. Exceeding
+    this is a compile error.
 
 See `test_data/blueprints/safe-module.yaml`.

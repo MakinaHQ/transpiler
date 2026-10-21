@@ -16,9 +16,10 @@
 //!
 //! Constant arguments are split at compile time. A runtime argument `v` is split on-chain
 //! with a math helper (`hi = v / 2^32`, `lo = (v - hi * 2^32) * 2^224`), and the two
-//! halves of a word are joined with `add` (their bits never overlap). The helper must
-//! implement `add`, `sub`, `mul` and `div` on `uint256` with checked arithmetic and the
-//! usual operand order (`sub(a, b) = a - b`), like makina-periphery's `MathHelper`.
+//! halves of a word are joined with `add` (their bits never overlap). None of these can
+//! overflow: `hi * 2^32 <= v`, `lo < 2^32`, and `hi < 2^224`. The helper must implement
+//! `add`, `sub`, `mul` and `div` on `uint256` with the usual operand order
+//! (`sub(a, b) = a - b`), like makina-periphery's `MathHelper`.
 
 use alloy::primitives::{B256, Selector, U256, keccak256};
 
@@ -142,7 +143,8 @@ mod tests {
         function mixed(uint256 a, address b, bool c, bytes32 d, int256 e);
     }
 
-    /// Evaluates the lowering with checked arithmetic, as the helper does on-chain.
+    /// Evaluates the lowering with checked arithmetic: a test fails if any step could
+    /// overflow or underflow.
     struct Numeric {
         ops: Vec<MathOp>,
     }
@@ -267,5 +269,54 @@ mod tests {
             MathOp::Div.selector(),
             Selector::from_slice(&keccak256("div(uint256,uint256)")[..4])
         );
+    }
+
+    #[test]
+    fn random_calls_match_abi_encoding() {
+        use alloy::dyn_abi::DynSolValue;
+        use alloy::primitives::{FixedBytes, I256};
+
+        // xorshift64*: deterministic, no extra dependency
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed >> 12;
+            seed ^= seed << 25;
+            seed ^= seed >> 27;
+            seed.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        };
+
+        for _ in 0..2_000 {
+            let selector = Selector::from((next() as u32).to_be_bytes());
+            let n = (next() % 9) as usize;
+            let mut values = Vec::with_capacity(n);
+            let mut args = Vec::with_capacity(n);
+            for _ in 0..n {
+                let limbs = [next(), next(), next(), next()];
+                let raw = U256::from_limbs(limbs);
+                let value = match next() % 5 {
+                    0 => DynSolValue::Uint(raw, 256),
+                    1 => DynSolValue::Address(Address::from_word(B256::from(
+                        raw.to_be_bytes::<32>(),
+                    ))),
+                    2 => DynSolValue::Bool(raw.bit(0)),
+                    3 => DynSolValue::FixedBytes(FixedBytes::from(raw.to_be_bytes::<32>()), 32),
+                    _ => DynSolValue::Int(I256::from_raw(raw), 256),
+                };
+                let word = B256::from_slice(&value.abi_encode());
+                args.push(if next() % 2 == 0 {
+                    ArgWord::Const(word)
+                } else {
+                    ArgWord::Runtime(U256::from_be_bytes(word.0))
+                });
+                values.push(value);
+            }
+
+            let mut emitter = Numeric { ops: vec![] };
+            let (length, words) = lower(&mut emitter, selector, args);
+
+            let mut expected = selector.to_vec();
+            expected.extend(DynSolValue::Tuple(values).abi_encode_params());
+            assert_eq!(concat(&words, length), expected);
+        }
     }
 }
