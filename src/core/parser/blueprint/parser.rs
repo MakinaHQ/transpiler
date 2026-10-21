@@ -488,7 +488,7 @@ impl BlueprintParser {
         Ok(vec)
     }
 
-    fn blueprint_parameter<'a>(
+    pub(super) fn blueprint_parameter<'a>(
         &self,
         field: &'a MarkedYaml<'a>,
         templates: &BTreeMap<String, BlueprintTemplate>,
@@ -497,6 +497,10 @@ impl BlueprintParser {
             .data
             .as_mapping_get("value")
             .ok_or_else(|| self.error(field.span, "parameter has no value"))?;
+
+        if let Some(node) = value_field.data.as_mapping_get("abi_encode_call") {
+            return self.abi_encode_call(field, node, templates);
+        }
 
         // for simple types we can parse the template variable directly
         if !value_field.is_sequence() {
@@ -839,5 +843,82 @@ actions:
                 "expected {expected:?} in {error:?}"
             );
         }
+    }
+
+    fn parse_abi_encode_call(
+        parameters: &str,
+        math_helper: &str,
+    ) -> miette::Result<super::Blueprint> {
+        let source = format!(
+            r#"protocol: test
+inputs:
+  to:
+    type: address
+actions:
+  use:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "balance()"
+        parameters: []
+        return:
+          name: "amount"
+          type: "uint256"
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "exec(bytes)"
+        parameters:
+          - type: "bytes"
+            value:
+              abi_encode_call:
+                selector: "transfer(address,uint256)"
+{math_helper}
+                parameters:
+{parameters}
+"#
+        );
+        BlueprintParser {
+            file: "abi-encode-call-test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+        .parse()
+    }
+
+    const HELPER: &str =
+        "                math_helper: \"0x3D623B199E290358416415eA7e05B635E442e3c0\"";
+    const TO: &str = "                  - type: address\n                    value: ${inputs.to}";
+
+    #[test]
+    fn abi_encode_call_accepts_runtime_parameters_with_a_helper() {
+        let params = format!(
+            "{TO}\n                  - type: uint256\n                    value: ${{returns.amount}}"
+        );
+        parse_abi_encode_call(&params, HELPER).unwrap();
+    }
+
+    #[test]
+    fn abi_encode_call_requires_a_helper_for_runtime_parameters() {
+        let params = format!(
+            "{TO}\n                  - type: uint256\n                    value: ${{returns.amount}}"
+        );
+        let err = parse_abi_encode_call(&params, "").unwrap_err();
+        assert!(format!("{err:?}").contains("math_helper is required"));
+    }
+
+    #[test]
+    fn abi_encode_call_compile_time_needs_no_helper() {
+        let params =
+            format!("{TO}\n                  - type: uint256\n                    value: \"7\"");
+        parse_abi_encode_call(&params, "").unwrap();
+    }
+
+    #[test]
+    fn abi_encode_call_rejects_parameters_that_do_not_match_the_signature() {
+        let params =
+            format!("{TO}\n                  - type: uint128\n                    value: \"7\"");
+        let err = parse_abi_encode_call(&params, "").unwrap_err();
+        assert!(format!("{err:?}").contains("does not match the signature"));
+
+        let err = parse_abi_encode_call(TO, "").unwrap_err();
+        assert!(format!("{err:?}").contains("signature has 2 parameters, 1 given"));
     }
 }
