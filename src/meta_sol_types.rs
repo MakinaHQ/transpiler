@@ -287,6 +287,25 @@ define_meta_types! {
             ("metadata", DynSolType::Bytes),
         ]
     },
+    // Morpho Midnight `Offer` fields plus ratifier data; `market` and `buy` are pinned by the leaf
+    MidnightOffer(MidnightOfferDef) {
+        properties: [
+            ("maker", DynSolType::Address),
+            ("start", DynSolType::Uint(256)),
+            ("expiry", DynSolType::Uint(256)),
+            ("tick", DynSolType::Uint(256)),
+            ("group", DynSolType::FixedBytes(32)),
+            ("callback", DynSolType::Address),
+            ("callbackData", DynSolType::Bytes),
+            ("receiverIfMakerIsSeller", DynSolType::Address),
+            ("ratifier", DynSolType::Address),
+            ("reduceOnly", DynSolType::Bool),
+            ("maxUnits", DynSolType::Uint(128)),
+            ("maxAssets", DynSolType::Uint(128)),
+            ("continuousFeeCap", DynSolType::Uint(256)),
+            ("ratifierData", DynSolType::Bytes),
+        ]
+    },
 }
 
 #[cfg(test)]
