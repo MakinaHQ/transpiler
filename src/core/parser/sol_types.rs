@@ -75,6 +75,51 @@ pub fn parse_sol_type_str(type_str: &str) -> SolTypeResult<DynSolType> {
     DynSolType::parse(type_str).map_err(|err| SolTypeError::InvalidSolType(Box::new(err)))
 }
 
+/// A function signature in the canonical form its selector is hashed from: whitespace
+/// removed, type aliases expanded (`uint` -> `uint256`), structs written as tuples.
+/// Returns `None` unless `signature` is `name(types)` with a valid identifier and types.
+pub fn canonical_signature(signature: &str) -> Option<(String, Vec<DynSolType>)> {
+    let signature: String = signature.chars().filter(|c| !c.is_whitespace()).collect();
+    let open = signature.find('(')?;
+    let name = &signature[..open];
+    let mut chars = name.chars();
+    let valid_name = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if !valid_name {
+        return None;
+    }
+    let DynSolType::Tuple(types) = parse_sol_type_str(&signature[open..]).ok()? else {
+        return None;
+    };
+    let canonical = format!(
+        "{name}({})",
+        types
+            .iter()
+            .map(canonical_type)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    Some((canonical, types))
+}
+
+fn canonical_type(ty: &DynSolType) -> String {
+    match ty {
+        DynSolType::Tuple(types) | DynSolType::CustomStruct { tuple: types, .. } => format!(
+            "({})",
+            types
+                .iter()
+                .map(canonical_type)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        DynSolType::Array(inner) => format!("{}[]", canonical_type(inner)),
+        DynSolType::FixedArray(inner, len) => format!("{}[{len}]", canonical_type(inner)),
+        other => other.sol_type_name().into_owned(),
+    }
+}
+
 pub fn parse_sol_value(
     sol_type: &DynSolType,
     yaml: &Yaml,
@@ -402,5 +447,42 @@ mod tests {
         };
         assert_eq!(size, 32);
         assert_eq!(bytes, keccak256("test/path value".as_bytes()));
+    }
+
+    #[test]
+    fn canonical_signature_expands_aliases_like_solidity() {
+        for (input, expected) in [
+            ("f(uint)", "f(uint256)"),
+            ("f(uint256)", "f(uint256)"),
+            (" transfer ( address , uint ) ", "transfer(address,uint256)"),
+            ("f(int,bytes32)", "f(int256,bytes32)"),
+            (
+                "f((uint,int8)[2],bytes,uint[])",
+                "f((uint256,int8)[2],bytes,uint256[])",
+            ),
+            ("f()", "f()"),
+            ("$_x1(bool)", "$_x1(bool)"),
+        ] {
+            assert_eq!(
+                canonical_signature(input).map(|(c, _)| c).as_deref(),
+                Some(expected),
+                "{input}"
+            );
+        }
+        // what `cast sig` would hash
+        assert_eq!(
+            alloy::primitives::keccak256(canonical_signature("f(uint)").unwrap().0)[..4],
+            alloy::primitives::keccak256("f(uint256)")[..4]
+        );
+        for invalid in [
+            "(uint)",
+            "1f(uint)",
+            "f(uint",
+            "f(uint))",
+            "f(notatype)",
+            "f",
+        ] {
+            assert_eq!(canonical_signature(invalid), None, "{invalid}");
+        }
     }
 }

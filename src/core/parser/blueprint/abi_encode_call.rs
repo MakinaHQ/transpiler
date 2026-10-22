@@ -15,10 +15,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy::{
-    dyn_abi::DynSolType,
-    primitives::{Selector, keccak256},
-};
+use alloy::dyn_abi::DynSolType;
 use saphyr::MarkedYaml;
 
 use crate::core::parser::{
@@ -27,7 +24,7 @@ use crate::core::parser::{
         types::BlueprintTemplate,
     },
     common::Parser,
-    sol_types::{parse_sol_type_str, parse_sol_value_marked},
+    sol_types::parse_sol_value_marked,
 };
 
 /// Types that ABI-encode to exactly one word, so they can be split on-chain.
@@ -59,24 +56,7 @@ impl BlueprintParser {
         }
 
         let signature_field = self.get_str(node, "selector")?;
-        let signature: String = signature_field
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        let parameter_types = signature
-            .find('(')
-            .and_then(|open| parse_sol_type_str(&signature[open..]).ok())
-            .and_then(|ty| match ty {
-                DynSolType::Tuple(types) => Some(types),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                self.error(
-                    signature_field.span,
-                    "expected a function signature, e.g. \"transfer(address,uint256)\"",
-                )
-            })?;
-        let selector = Selector::from(keccak256(&signature).first_chunk().unwrap());
+        let (selector, parameter_types) = self.selector(node)?;
 
         let parameter_fields: Vec<&MarkedYaml> = match node.data.as_mapping_get("parameters") {
             Some(parameters) => parameters
@@ -145,9 +125,7 @@ impl BlueprintParser {
         }
 
         Ok(BlueprintParameter::AbiEncodeCall(Box::new(AbiEncodeCall {
-            signature,
             selector,
-            parameter_types,
             parameters,
             math_helper,
         })))

@@ -77,6 +77,9 @@ a module of.
           value: ${returns.balance}
 ```
 
+- **Selectors** — here and on every call — are hashed from the canonical signature, as
+  Solidity does: `f(uint)` and `f(uint256)` give the same selector. Nested array and tuple
+  elements must declare the type their parent implies.
 - **Compile-time:** when every parameter is a literal, constant or input, the calldata is
   folded into a single `bytes` literal, committed in the leaf like any other constant.
   Any ABI type works, including arrays, tuples and nested `abi_encode_call`.

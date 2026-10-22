@@ -40,9 +40,7 @@ pub enum BlueprintParameter {
 /// runtime words are spliced on-chain with `math_helper` (see `core::abi_encode_call`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbiEncodeCall {
-    pub signature: String,
     pub selector: Selector,
-    pub parameter_types: Vec<DynSolType>,
     pub parameters: Vec<BlueprintParameter>,
     pub math_helper: Option<BlueprintTarget>,
 }

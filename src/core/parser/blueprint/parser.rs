@@ -22,7 +22,7 @@ use crate::{
         },
         common::{Marked, Parser},
         helpers,
-        sol_types::{YamlSolValue, parse_sol_value_marked},
+        sol_types::{YamlSolValue, canonical_signature, parse_sol_value_marked},
     },
     meta_sol_types::MetaDynSolType,
 };
@@ -421,13 +421,7 @@ impl BlueprintParser {
 
             let target = self.blueprint_target(elem, templates)?;
 
-            let str_selector: String = self
-                .get_str(elem, "selector")?
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let hash_selector = keccak256(str_selector);
-            let selector = Selector::from(hash_selector.first_chunk().unwrap());
+            let selector = self.selector(elem)?.0;
 
             let parameters_field = elem
                 .data
@@ -467,6 +461,23 @@ impl BlueprintParser {
         }
 
         Ok((vec, returns_mapping))
+    }
+
+    /// The selector of `node.selector`, hashed from the canonical signature (so `f(uint)`
+    /// and `f(uint256)` agree), and the signature's parameter types.
+    pub(super) fn selector<'a>(
+        &self,
+        node: &'a MarkedYaml<'a>,
+    ) -> miette::Result<(Selector, Vec<DynSolType>)> {
+        let field = self.get_str(node, "selector")?;
+        let (canonical, types) = canonical_signature(*field).ok_or_else(|| {
+            self.error(
+                field.span,
+                "expected a function signature, e.g. \"transfer(address,uint256)\"",
+            )
+        })?;
+        let selector = Selector::from(keccak256(canonical).first_chunk().unwrap());
+        Ok((selector, types))
     }
 
     fn blueprint_parameters<'a>(
@@ -535,12 +546,13 @@ impl BlueprintParser {
 
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .zip(&inner)
+                    .map(|(elem, ty)| self.element_parameter(elem, ty, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::Tuple(params))
             }
-            DynSolType::FixedArray(_, length) => {
+            DynSolType::FixedArray(inner, length) => {
                 if sequence.len() != length {
                     return Err(self
                         .error(value_field, "does not match fixed array length")
@@ -549,15 +561,15 @@ impl BlueprintParser {
 
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .map(|elem| self.element_parameter(elem, &inner, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::FixedArray(params, length))
             }
-            DynSolType::Array(_) => {
+            DynSolType::Array(inner) => {
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .map(|elem| self.element_parameter(elem, &inner, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::DynamicArray(params))
@@ -567,6 +579,24 @@ impl BlueprintParser {
                 "only Array | FixedArray | Tuple are allowed here",
             ))?,
         }
+    }
+
+    /// An element of an array or tuple parameter, whose declared type must be the one its
+    /// parent type implies (an `uint256[]` cannot hold a `string`).
+    fn element_parameter<'a>(
+        &self,
+        elem: &'a MarkedYaml<'a>,
+        expected: &DynSolType,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<BlueprintParameter> {
+        let declared = self.get_type(elem, "type")?;
+        if &declared.inner != expected {
+            Err(self.error(
+                declared.span,
+                format!("expected element type {expected}, got {}", declared.inner),
+            ))?;
+        }
+        self.blueprint_parameter(elem, templates)
     }
 
     /// Parses a field that can hold a raw value or a template variable
@@ -920,5 +950,74 @@ actions:
 
         let err = parse_abi_encode_call(TO, "").unwrap_err();
         assert!(format!("{err:?}").contains("signature has 2 parameters, 1 given"));
+    }
+
+    fn parse_source(source: String) -> miette::Result<super::Blueprint> {
+        BlueprintParser {
+            file: "test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+        .parse()
+    }
+
+    #[test]
+    fn nested_elements_must_match_the_parent_type() {
+        let source = r#"protocol: test
+actions:
+  use:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "exec(bytes)"
+        parameters:
+          - type: bytes
+            value:
+              abi_encode_call:
+                selector: f(uint256[])
+                parameters:
+                  - type: uint256[]
+                    value:
+                      - type: string
+                        value: oops
+"#;
+        let err = parse_source(source.to_string()).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("expected element type uint256, got string"),
+            "{err:?}"
+        );
+
+        // the same holds for ordinary call parameters and tuples
+        let source = r#"protocol: test
+actions:
+  use:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "g((uint256,address))"
+        parameters:
+          - type: (uint256,address)
+            value:
+              - type: uint256
+                value: "1"
+              - type: uint256
+                value: "2"
+"#;
+        let err = parse_source(source.to_string()).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("expected element type address, got uint256"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn selectors_are_hashed_from_the_canonical_signature() {
+        let call = |selector: &str| {
+            let source = format!(
+                "protocol: test\nactions:\n  use:\n    calls:\n      - target: \"0x0000000000000000000000000000000000000001\"\n        selector: \"{selector}\"\n        parameters: []\n"
+            );
+            parse_source(source).unwrap().actions["use"].calls[0].selector
+        };
+        assert_eq!(call("f(uint)"), call("f(uint256)"));
+        assert_eq!(call("f( uint256 )"), call("f(uint256)"));
+        assert!(parse_source("protocol: test\nactions:\n  use:\n    calls:\n      - target: \"0x0000000000000000000000000000000000000001\"\n        selector: \"f(uint\"\n        parameters: []\n".to_string()).is_err());
     }
 }
