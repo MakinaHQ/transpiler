@@ -24,20 +24,8 @@ use crate::core::parser::{
         types::BlueprintTemplate,
     },
     common::Parser,
-    sol_types::parse_sol_value_marked,
+    sol_types::{is_one_word, parse_sol_value_marked},
 };
-
-/// Types that ABI-encode to exactly one word, so they can be split on-chain.
-fn is_single_word(ty: &DynSolType) -> bool {
-    matches!(
-        ty,
-        DynSolType::Address
-            | DynSolType::Bool
-            | DynSolType::Uint(_)
-            | DynSolType::Int(_)
-            | DynSolType::FixedBytes(_)
-    )
-}
 
 impl BlueprintParser {
     /// `field` is the parameter (`type` + `value`), `node` the `abi_encode_call` mapping.
@@ -107,7 +95,7 @@ impl BlueprintParser {
                 .zip(&parameters)
                 .zip(&parameter_types)
             {
-                if !is_single_word(ty) {
+                if !is_one_word(ty) {
                     Err(self.error(
                         *elem,
                         "with runtime values, every parameter must be a one-word static type (address, bool, uintN, intN, bytesN)",

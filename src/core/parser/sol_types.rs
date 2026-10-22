@@ -75,24 +75,37 @@ pub fn parse_sol_type_str(type_str: &str) -> SolTypeResult<DynSolType> {
     DynSolType::parse(type_str).map_err(|err| SolTypeError::InvalidSolType(Box::new(err)))
 }
 
-/// A function signature in the canonical form its selector is hashed from: whitespace
-/// removed, type aliases expanded (`uint` -> `uint256`), structs written as tuples.
-/// Returns `None` unless `signature` is `name(types)` with a valid identifier and types.
-pub fn canonical_signature(signature: &str) -> Option<(String, Vec<DynSolType>)> {
-    let signature: String = signature.chars().filter(|c| !c.is_whitespace()).collect();
-    let open = signature.find('(')?;
-    let name = &signature[..open];
+/// Parses a function signature that must be written in canonical Solidity form, e.g.
+/// `transfer(address,uint256)`: the exact string a selector is hashed from. Whitespace is
+/// allowed only around `,` `(` `)` `[` `]`. Anything else is an error, naming the
+/// canonical form when there is one: a type alias (`uint`), a struct name, a parameter
+/// name, a trailing comma, `tuple(...)`, or a type Solidity does not have (`uint7`,
+/// `bytes33`, `fixed128x18`).
+/// Returns the canonical signature and its parameter types.
+pub fn parse_signature(signature: &str) -> Result<(String, Vec<DynSolType>), String> {
+    static AROUND_PUNCTUATION: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\s*([,()\[\]])\s*").unwrap());
+    let compact = AROUND_PUNCTUATION.replace_all(signature.trim(), "$1");
+
+    let invalid = || {
+        format!(
+            "expected a function signature such as \"transfer(address,uint256)\", got \"{signature}\""
+        )
+    };
+    let open = compact.find('(').ok_or_else(invalid)?;
+    let name = &compact[..open];
     let mut chars = name.chars();
     let valid_name = chars
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
-    if !valid_name {
-        return None;
-    }
-    let DynSolType::Tuple(types) = parse_sol_type_str(&signature[open..]).ok()? else {
-        return None;
+    let Ok(DynSolType::Tuple(types)) = DynSolType::parse(&compact[open..]) else {
+        return Err(invalid());
     };
+    if !valid_name {
+        return Err(invalid());
+    }
+
     let canonical = format!(
         "{name}({})",
         types
@@ -101,7 +114,22 @@ pub fn canonical_signature(signature: &str) -> Option<(String, Vec<DynSolType>)>
             .collect::<Vec<_>>()
             .join(",")
     );
-    Some((canonical, types))
+    if compact != canonical {
+        return Err(format!("not a canonical signature: write \"{canonical}\""));
+    }
+    Ok((canonical, types))
+}
+
+/// Types that ABI-encode to exactly one 32-byte word.
+pub fn is_one_word(ty: &DynSolType) -> bool {
+    matches!(
+        ty,
+        DynSolType::Address
+            | DynSolType::Bool
+            | DynSolType::Uint(_)
+            | DynSolType::Int(_)
+            | DynSolType::FixedBytes(_)
+    )
 }
 
 fn canonical_type(ty: &DynSolType) -> String {
@@ -450,39 +478,62 @@ mod tests {
     }
 
     #[test]
-    fn canonical_signature_expands_aliases_like_solidity() {
-        for (input, expected) in [
-            ("f(uint)", "f(uint256)"),
-            ("f(uint256)", "f(uint256)"),
-            (" transfer ( address , uint ) ", "transfer(address,uint256)"),
-            ("f(int,bytes32)", "f(int256,bytes32)"),
+    fn signatures_must_be_canonical_solidity() {
+        for (input, canonical) in [
+            ("transfer(address,uint256)", "transfer(address,uint256)"),
+            (" approve(address, uint256) ", "approve(address,uint256)"),
             (
-                "f((uint,int8)[2],bytes,uint[])",
+                "f((uint256,int8)[2],bytes,uint256[])",
                 "f((uint256,int8)[2],bytes,uint256[])",
             ),
+            ("f((uint256))", "f((uint256))"),
             ("f()", "f()"),
             ("$_x1(bool)", "$_x1(bool)"),
         ] {
             assert_eq!(
-                canonical_signature(input).map(|(c, _)| c).as_deref(),
-                Some(expected),
+                parse_signature(input).map(|(c, _)| c),
+                Ok(canonical.to_string()),
                 "{input}"
             );
         }
-        // what `cast sig` would hash
-        assert_eq!(
-            alloy::primitives::keccak256(canonical_signature("f(uint)").unwrap().0)[..4],
-            alloy::primitives::keccak256("f(uint256)")[..4]
-        );
-        for invalid in [
-            "(uint)",
-            "1f(uint)",
-            "f(uint",
-            "f(uint))",
-            "f(notatype)",
-            "f",
+        // aliases and sloppy forms: rejected, naming the canonical form
+        for (input, canonical) in [
+            ("f(uint)", "f(uint256)"),
+            ("transfer(address,uint)", "transfer(address,uint256)"),
+            ("f(int)", "f(int256)"),
+            ("f(uint256,)", "f(uint256)"),
+            ("f(tuple(uint256))", "f((uint256))"),
         ] {
-            assert_eq!(canonical_signature(invalid), None, "{invalid}");
+            let err = parse_signature(input).unwrap_err();
+            assert!(
+                err.contains(&format!("write \"{canonical}\"")),
+                "{input}: {err}"
+            );
+        }
+        // not Solidity at all
+        for input in [
+            "f(uint7)",
+            "f(bytes33)",
+            "f(int0)",
+            "f(uint264)",
+            "f(fixed128x18)",
+            "f(SwapData)",
+            "f(address payable)",
+            "f(uint256 amount)",
+            "function f(uint256)",
+            "f(uint256) returns (uint256)",
+            "f(uint256)(uint256)",
+            "(uint256)",
+            "1f(uint256)",
+            "f(uint256",
+            "f",
+            "f(uint 256)",
+        ] {
+            let err = parse_signature(input).unwrap_err();
+            assert!(
+                err.starts_with("expected a function signature"),
+                "{input}: {err}"
+            );
         }
     }
 }

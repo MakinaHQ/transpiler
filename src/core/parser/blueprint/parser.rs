@@ -4,10 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use alloy::{
-    dyn_abi::DynSolType,
-    primitives::{Address, Selector, keccak256},
-};
+use alloy::{dyn_abi::DynSolType, primitives::Address};
 use indexmap::IndexMap;
 use miette::{NamedSource, miette};
 use regex::Regex;
@@ -22,7 +19,7 @@ use crate::{
         },
         common::{Marked, Parser},
         helpers,
-        sol_types::{YamlSolValue, canonical_signature, parse_sol_value_marked},
+        sol_types::{YamlSolValue, parse_sol_value_marked},
     },
     meta_sol_types::MetaDynSolType,
 };
@@ -34,6 +31,15 @@ pub struct BlueprintParser {
 }
 
 impl BlueprintParser {
+    #[cfg(test)]
+    pub(super) fn from_source(source: String) -> Self {
+        Self {
+            file: "test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+    }
+
     pub fn new<P>(file: P) -> miette::Result<Self>
     where
         P: Into<PathBuf>,
@@ -421,13 +427,14 @@ impl BlueprintParser {
 
             let target = self.blueprint_target(elem, templates)?;
 
-            let selector = self.selector(elem)?.0;
+            let (selector, signature_types) = self.selector(elem)?;
 
             let parameters_field = elem
                 .data
                 .as_mapping_get("parameters")
                 .ok_or(self.error(elem.span, "'parameters' is missing"))?;
             let parameters = self.blueprint_parameters(parameters_field, templates)?;
+            self.check_parameters(parameters_field, &parameters, &signature_types)?;
 
             let r#return = if let Some(return_field) = elem.data.as_mapping_get("return") {
                 let name = self.get_str(return_field, "name")?;
@@ -461,23 +468,6 @@ impl BlueprintParser {
         }
 
         Ok((vec, returns_mapping))
-    }
-
-    /// The selector of `node.selector`, hashed from the canonical signature (so `f(uint)`
-    /// and `f(uint256)` agree), and the signature's parameter types.
-    pub(super) fn selector<'a>(
-        &self,
-        node: &'a MarkedYaml<'a>,
-    ) -> miette::Result<(Selector, Vec<DynSolType>)> {
-        let field = self.get_str(node, "selector")?;
-        let (canonical, types) = canonical_signature(*field).ok_or_else(|| {
-            self.error(
-                field.span,
-                "expected a function signature, e.g. \"transfer(address,uint256)\"",
-            )
-        })?;
-        let selector = Selector::from(keccak256(canonical).first_chunk().unwrap());
-        Ok((selector, types))
     }
 
     fn blueprint_parameters<'a>(
@@ -950,74 +940,5 @@ actions:
 
         let err = parse_abi_encode_call(TO, "").unwrap_err();
         assert!(format!("{err:?}").contains("signature has 2 parameters, 1 given"));
-    }
-
-    fn parse_source(source: String) -> miette::Result<super::Blueprint> {
-        BlueprintParser {
-            file: "test.yaml".into(),
-            source,
-            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
-        }
-        .parse()
-    }
-
-    #[test]
-    fn nested_elements_must_match_the_parent_type() {
-        let source = r#"protocol: test
-actions:
-  use:
-    calls:
-      - target: "0x0000000000000000000000000000000000000001"
-        selector: "exec(bytes)"
-        parameters:
-          - type: bytes
-            value:
-              abi_encode_call:
-                selector: f(uint256[])
-                parameters:
-                  - type: uint256[]
-                    value:
-                      - type: string
-                        value: oops
-"#;
-        let err = parse_source(source.to_string()).unwrap_err();
-        assert!(
-            format!("{err:?}").contains("expected element type uint256, got string"),
-            "{err:?}"
-        );
-
-        // the same holds for ordinary call parameters and tuples
-        let source = r#"protocol: test
-actions:
-  use:
-    calls:
-      - target: "0x0000000000000000000000000000000000000001"
-        selector: "g((uint256,address))"
-        parameters:
-          - type: (uint256,address)
-            value:
-              - type: uint256
-                value: "1"
-              - type: uint256
-                value: "2"
-"#;
-        let err = parse_source(source.to_string()).unwrap_err();
-        assert!(
-            format!("{err:?}").contains("expected element type address, got uint256"),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn selectors_are_hashed_from_the_canonical_signature() {
-        let call = |selector: &str| {
-            let source = format!(
-                "protocol: test\nactions:\n  use:\n    calls:\n      - target: \"0x0000000000000000000000000000000000000001\"\n        selector: \"{selector}\"\n        parameters: []\n"
-            );
-            parse_source(source).unwrap().actions["use"].calls[0].selector
-        };
-        assert_eq!(call("f(uint)"), call("f(uint256)"));
-        assert_eq!(call("f( uint256 )"), call("f(uint256)"));
-        assert!(parse_source("protocol: test\nactions:\n  use:\n    calls:\n      - target: \"0x0000000000000000000000000000000000000001\"\n        selector: \"f(uint\"\n        parameters: []\n".to_string()).is_err());
     }
 }

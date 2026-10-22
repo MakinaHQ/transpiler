@@ -58,6 +58,24 @@ The transpiler supports template variables that can be used throughout YAML file
 
 The transpiler outputs TOML rootfiles that can be used to interact with the caliber contracts.
 
+### Call signatures
+
+Every `selector` (and every `abi_encode_call` selector) must be the canonical Solidity
+signature, the exact string the selector is hashed from: `transfer(address,uint256)`.
+Whitespace is tolerated only around `,` `(` `)` `[` `]`. Anything else is a compile error
+naming the canonical form when there is one: aliases (`uint`), `tuple(...)`, trailing
+commas, parameter names, struct names, and types Solidity does not have (`uint7`,
+`bytes33`, `fixed128x18`).
+
+The declared parameters must fit the signature: same count, and each declared type equal
+to the signature's, element by element inside tuples and arrays. The only exceptions are
+encoding-identical idioms:
+- a one-word value into `bytes32`, an untyped word (key-value store, helpers);
+- an integer into an integer of the same signedness and another width (the callee's ABI
+  decoder rejects a value that does not fit);
+- a multi-value return captured raw (a tuple-typed return) into `bytes`;
+- a runtime `bytes` already holding an encoded struct, into that dynamic struct.
+
 ### Encoding calldata: `abi_encode_call`
 
 A `bytes` parameter can be the calldata of another call, built from typed parameters.
@@ -77,9 +95,6 @@ a module of.
           value: ${returns.balance}
 ```
 
-- **Selectors** — here and on every call — are hashed from the canonical signature, as
-  Solidity does: `f(uint)` and `f(uint256)` give the same selector. Nested array and tuple
-  elements must declare the type their parent implies.
 - **Compile-time:** when every parameter is a literal, constant or input, the calldata is
   folded into a single `bytes` literal, committed in the leaf like any other constant.
   Any ABI type works, including arrays, tuples and nested `abi_encode_call`.
