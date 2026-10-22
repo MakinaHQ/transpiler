@@ -58,6 +58,17 @@ The transpiler supports template variables that can be used throughout YAML file
 
 The transpiler outputs TOML rootfiles that can be used to interact with the caliber contracts.
 
+### Inputs
+
+A blueprint's `inputs` and the values an instruction supplies for them are one-word
+types: `address`, `bool`, `uintN`, `intN`, `bytesN`. An input is a literal fixed per
+instruction, and weiroll passes a static literal as exactly one 32-byte word. An
+instruction must supply each input with exactly the declared type, and only inputs the
+blueprint declares. For a string key use a `bytes32` `${keccak256(...)}`. For fixed
+bytes, strings or arrays use a constant or an inline value in the blueprint; for data
+chosen at execution time, an input slot; to build calldata, `abi_encode_call`. (Input
+slots keep their wider set of types.)
+
 ### Call signatures
 
 Every `selector` (and every `abi_encode_call` selector) must be the canonical Solidity

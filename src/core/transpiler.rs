@@ -102,6 +102,25 @@ pub(crate) fn transpile(
         }
     };
 
+    for (name, supplied) in &inst.definition.inputs {
+        let declared = blueprint.inputs.values().find(|input| &input.name == name).ok_or_else(|| {
+            miette!(
+                "instruction \"{}\" supplies input \"{name}\", which blueprint {} does not declare",
+                inst.definition.label,
+                blueprint.path.display()
+            )
+        })?;
+        if supplied.r#type != declared.r#type {
+            return Err(miette!(
+                "instruction \"{}\": input \"{name}\" is {}, but blueprint {} declares {}",
+                inst.definition.label,
+                supplied.r#type,
+                blueprint.path.display(),
+                declared.r#type
+            ));
+        }
+    }
+
     let (_name, action) = blueprint
         .actions
         .iter()
@@ -253,20 +272,12 @@ fn transpile_parameter(parameter: &BlueprintParameter, ctx: &mut Context) -> Val
         BlueprintParameter::Input(name) => {
             let input = find_input(ctx, name);
 
-            let encoded: Bytes = match input.r#type {
-                DynSolType::String => input
-                    .value
-                    .abi_encode_params()
-                    .into_iter()
-                    .skip(32)
-                    .collect(),
-                _ => input.value.abi_encode_params().into(),
-            };
-            let dynamic = input.value.is_dynamic();
+            // inputs are one word (checked when parsing both sides)
+            let encoded: Bytes = input.value.abi_encode_params().into();
 
             ctx.checked_slots.push(encoded.clone());
 
-            Value::Literal(Literal::new(encoded, dynamic))
+            Value::Literal(Literal::new(encoded, false))
         }
         BlueprintParameter::InputSlot(name) => {
             let (name, input) = ctx

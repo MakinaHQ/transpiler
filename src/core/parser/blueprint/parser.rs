@@ -19,7 +19,7 @@ use crate::{
         },
         common::{Marked, Parser},
         helpers,
-        sol_types::{YamlSolValue, parse_sol_value_marked},
+        sol_types::{ONE_WORD_INPUT_HINT, YamlSolValue, is_one_word, parse_sol_value_marked},
     },
     meta_sol_types::MetaDynSolType,
 };
@@ -32,7 +32,7 @@ pub struct BlueprintParser {
 
 impl BlueprintParser {
     #[cfg(test)]
-    pub(super) fn from_source(source: String) -> Self {
+    pub(crate) fn from_source(source: String) -> Self {
         Self {
             file: "test.yaml".into(),
             source,
@@ -148,8 +148,15 @@ impl BlueprintParser {
                 .ok_or(self.error(key.span, "input has invalid name"))?;
 
             let key = format!("${{inputs.{name}}}");
-            let value = self.blueprint_input(name, value)?;
-            map.insert(key, BlueprintTemplate::Input(value));
+            let input = self.blueprint_input(name, value)?;
+            if !is_one_word(&input.r#type) {
+                let r#type = self.get_type(value, "type")?;
+                Err(self.error(
+                    r#type.span,
+                    format!("{}: {ONE_WORD_INPUT_HINT}", r#type.inner),
+                ))?;
+            }
+            map.insert(key, BlueprintTemplate::Input(input));
         }
 
         Ok(map)
@@ -731,7 +738,8 @@ impl BlueprintParser {
     ) -> miette::Result<BlueprintInput> {
         let r#type = self.get_type(field, "type")?;
 
-        // Reject complex dynamic types (arrays, tuples) but allow:
+        // `inputs:` are further restricted to one word (see `inputs`). Input slots also go
+        // through here. Reject complex dynamic types (arrays, tuples) but allow:
         // - Bytes and String (dynamic but valid as inputs)
         // - CustomStructs (used for meta types like SwapData)
         let is_allowed_dynamic = matches!(r#type.inner, DynSolType::Bytes | DynSolType::String);

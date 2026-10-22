@@ -120,6 +120,13 @@ pub fn parse_signature(signature: &str) -> Result<(String, Vec<DynSolType>), Str
     Ok((canonical, types))
 }
 
+/// Why an input must be one word, and what to use instead. An input is a literal fixed per
+/// instruction, and weiroll passes a static literal as exactly one 32-byte word.
+pub const ONE_WORD_INPUT_HINT: &str = "inputs must be one-word types (address, bool, uintN, \
+intN, bytesN). For a string key use a bytes32 `${keccak256(...)}`; for fixed bytes, strings \
+or arrays use a constant or an inline value in the blueprint; for data chosen at execution \
+use an input slot; to build calldata use `abi_encode_call`";
+
 /// Types that ABI-encode to exactly one 32-byte word.
 pub fn is_one_word(ty: &DynSolType) -> bool {
     matches!(
