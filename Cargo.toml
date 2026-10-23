@@ -8,12 +8,6 @@ description = "transpiles Makina instructions into executable weiroll scripts"
 authors = ["security@makina.finance"]
 dist = true
 
-[package.metadata.wix]
-upgrade-guid = "77ADBBB1-8157-48AD-9F43-A6879C80B977"
-path-guid = "D8B6B6F0-9D23-4084-8FA2-23095FF8C89F"
-license = false
-eula = false
-
 [dependencies]
 # ethereum
 alloy = { version = "2.2.0", features = ["full", "eip712"] }
