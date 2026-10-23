@@ -6268,7 +6268,7 @@ dependencies = [
 [[package]]
 name = "weiroll"
 version = "0.1.0"
-source = "git+https://github.com/MakinaHQ/weiroll-rs.git?rev=55e33f61150c0ffb53d8b3261824a201dda128c7#55e33f61150c0ffb53d8b3261824a201dda128c7"
+source = "git+https://github.com/MakinaHQ/weiroll-rs.git?rev=325daf7025851bf786253a7a395f6c278d1434fb#325daf7025851bf786253a7a395f6c278d1434fb"
 dependencies = [
  "alloy",
  "bitflags 2.10.0",

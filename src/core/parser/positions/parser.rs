@@ -610,8 +610,13 @@ impl PositionParser {
             .ok_or(self.error(input.span, "instruction input type is required"))?
             .span;
 
-        if parsed.as_type().map(|t| t.is_dynamic()).unwrap_or(false) {
-            return Err(self.error(type_span, "dynamic types not supported"))?;
+        if let Some(r#type) = parsed.as_type()
+            && !sol_types::is_one_word(r#type)
+        {
+            Err(self.error(
+                type_span,
+                format!("{type}: {}", sol_types::ONE_WORD_INPUT_HINT),
+            ))?;
         }
 
         let value = match parsed.template.clone() {

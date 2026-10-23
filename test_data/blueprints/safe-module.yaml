@@ -1,0 +1,79 @@
+protocol: "safe"
+
+# abi_encode_call examples: a caliber driving a Safe as its module.
+
+constants:
+  math_helper:
+    type: "address"
+    value: "0x3D623B199E290358416415eA7e05B635E442e3c0"
+
+inputs:
+  safe:
+    type: "address"
+  token:
+    type: "address"
+  recipient:
+    type: "address"
+
+actions:
+  # Every argument known at compile time: folded into a bytes literal.
+  approve:
+    calls:
+      - description: "Safe approves the recipient"
+        target: ${inputs.safe}
+        selector: "execTransactionFromModule(address,uint256,bytes,uint8)"
+        parameters:
+          - type: "address"
+            value: ${inputs.token}
+          - type: "uint256"
+            value: "0"
+          - type: "bytes"
+            value:
+              abi_encode_call:
+                selector: "approve(address,uint256)"
+                parameters:
+                  - type: "address"
+                    value: ${inputs.recipient}
+                  - type: "uint256"
+                    value: "${builtins.UINT256_MAX}"
+          - type: "uint8"
+            value: "0"
+        return:
+          name: "ok"
+          type: "bool"
+
+  # A runtime argument: spliced on-chain with the math helper.
+  sweep:
+    calls:
+      - description: "Safe balance"
+        target: ${inputs.token}
+        selector: "balanceOf(address)"
+        parameters:
+          - type: "address"
+            value: ${inputs.safe}
+        return:
+          name: "balance"
+          type: "uint256"
+      - description: "Safe transfers its balance to the recipient"
+        target: ${inputs.safe}
+        selector: "execTransactionFromModule(address,uint256,bytes,uint8)"
+        parameters:
+          - type: "address"
+            value: ${inputs.token}
+          - type: "uint256"
+            value: "0"
+          - type: "bytes"
+            value:
+              abi_encode_call:
+                selector: "transfer(address,uint256)"
+                math_helper: ${constants.math_helper}
+                parameters:
+                  - type: "address"
+                    value: ${inputs.recipient}
+                  - type: "uint256"
+                    value: ${returns.balance}
+          - type: "uint8"
+            value: "0"
+        return:
+          name: "ok"
+          type: "bool"

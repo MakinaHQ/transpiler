@@ -75,6 +75,86 @@ pub fn parse_sol_type_str(type_str: &str) -> SolTypeResult<DynSolType> {
     DynSolType::parse(type_str).map_err(|err| SolTypeError::InvalidSolType(Box::new(err)))
 }
 
+/// Parses a function signature that must be written in canonical Solidity form, e.g.
+/// `transfer(address,uint256)`: the exact string a selector is hashed from. Whitespace is
+/// allowed only around `,` `(` `)` `[` `]`. Anything else is an error, naming the
+/// canonical form when there is one: a type alias (`uint`), a struct name, a parameter
+/// name, a trailing comma, `tuple(...)`, or a type Solidity does not have (`uint7`,
+/// `bytes33`, `fixed128x18`).
+/// Returns the canonical signature and its parameter types.
+pub fn parse_signature(signature: &str) -> Result<(String, Vec<DynSolType>), String> {
+    static AROUND_PUNCTUATION: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\s*([,()\[\]])\s*").unwrap());
+    let compact = AROUND_PUNCTUATION.replace_all(signature.trim(), "$1");
+
+    let invalid = || {
+        format!(
+            "expected a function signature such as \"transfer(address,uint256)\", got \"{signature}\""
+        )
+    };
+    let open = compact.find('(').ok_or_else(invalid)?;
+    let name = &compact[..open];
+    let mut chars = name.chars();
+    let valid_name = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    let Ok(DynSolType::Tuple(types)) = DynSolType::parse(&compact[open..]) else {
+        return Err(invalid());
+    };
+    if !valid_name {
+        return Err(invalid());
+    }
+
+    let canonical = format!(
+        "{name}({})",
+        types
+            .iter()
+            .map(canonical_type)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    if compact != canonical {
+        return Err(format!("not a canonical signature: write \"{canonical}\""));
+    }
+    Ok((canonical, types))
+}
+
+/// Why an input must be one word, and what to use instead. An input is a literal fixed per
+/// instruction, and weiroll passes a static literal as exactly one 32-byte word.
+pub const ONE_WORD_INPUT_HINT: &str = "inputs must be one-word types (address, bool, uintN, \
+intN, bytesN). For a string key use a bytes32 `${keccak256(...)}`; for fixed bytes, strings \
+or arrays use a constant or an inline value in the blueprint; for data chosen at execution \
+use an input slot; to build calldata use `abi_encode_call`";
+
+/// Types that ABI-encode to exactly one 32-byte word.
+pub fn is_one_word(ty: &DynSolType) -> bool {
+    matches!(
+        ty,
+        DynSolType::Address
+            | DynSolType::Bool
+            | DynSolType::Uint(_)
+            | DynSolType::Int(_)
+            | DynSolType::FixedBytes(_)
+    )
+}
+
+fn canonical_type(ty: &DynSolType) -> String {
+    match ty {
+        DynSolType::Tuple(types) | DynSolType::CustomStruct { tuple: types, .. } => format!(
+            "({})",
+            types
+                .iter()
+                .map(canonical_type)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        DynSolType::Array(inner) => format!("{}[]", canonical_type(inner)),
+        DynSolType::FixedArray(inner, len) => format!("{}[{len}]", canonical_type(inner)),
+        other => other.sol_type_name().into_owned(),
+    }
+}
+
 pub fn parse_sol_value(
     sol_type: &DynSolType,
     yaml: &Yaml,
@@ -402,5 +482,65 @@ mod tests {
         };
         assert_eq!(size, 32);
         assert_eq!(bytes, keccak256("test/path value".as_bytes()));
+    }
+
+    #[test]
+    fn signatures_must_be_canonical_solidity() {
+        for (input, canonical) in [
+            ("transfer(address,uint256)", "transfer(address,uint256)"),
+            (" approve(address, uint256) ", "approve(address,uint256)"),
+            (
+                "f((uint256,int8)[2],bytes,uint256[])",
+                "f((uint256,int8)[2],bytes,uint256[])",
+            ),
+            ("f((uint256))", "f((uint256))"),
+            ("f()", "f()"),
+            ("$_x1(bool)", "$_x1(bool)"),
+        ] {
+            assert_eq!(
+                parse_signature(input).map(|(c, _)| c),
+                Ok(canonical.to_string()),
+                "{input}"
+            );
+        }
+        // aliases and sloppy forms: rejected, naming the canonical form
+        for (input, canonical) in [
+            ("f(uint)", "f(uint256)"),
+            ("transfer(address,uint)", "transfer(address,uint256)"),
+            ("f(int)", "f(int256)"),
+            ("f(uint256,)", "f(uint256)"),
+            ("f(tuple(uint256))", "f((uint256))"),
+        ] {
+            let err = parse_signature(input).unwrap_err();
+            assert!(
+                err.contains(&format!("write \"{canonical}\"")),
+                "{input}: {err}"
+            );
+        }
+        // not Solidity at all
+        for input in [
+            "f(uint7)",
+            "f(bytes33)",
+            "f(int0)",
+            "f(uint264)",
+            "f(fixed128x18)",
+            "f(SwapData)",
+            "f(address payable)",
+            "f(uint256 amount)",
+            "function f(uint256)",
+            "f(uint256) returns (uint256)",
+            "f(uint256)(uint256)",
+            "(uint256)",
+            "1f(uint256)",
+            "f(uint256",
+            "f",
+            "f(uint 256)",
+        ] {
+            let err = parse_signature(input).unwrap_err();
+            assert!(
+                err.starts_with("expected a function signature"),
+                "{input}: {err}"
+            );
+        }
     }
 }

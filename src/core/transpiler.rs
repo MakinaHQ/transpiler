@@ -14,12 +14,14 @@ use weiroll::{
 
 use crate::types::InstructionType;
 use crate::{
+    core::abi_encode_call::{self, ArgWord, Emitter, MathOp},
     core::parser::{
         blueprint::{
-            Blueprint, BlueprintAction, BlueprintCall, BlueprintInputSlot, BlueprintInputType,
-            BlueprintParameter, BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
+            AbiEncodeCall, Blueprint, BlueprintAction, BlueprintCall, BlueprintInputSlot,
+            BlueprintInputType, BlueprintParameter, BlueprintParser, BlueprintReservedSlot,
+            BlueprintTarget,
         },
-        positions::types::{Instruction, InstructionDefinition, Position},
+        positions::types::{Instruction, InstructionDefinition, Position, SolValue},
     },
     token_list::TokenInfo,
     types::{
@@ -83,7 +85,7 @@ pub fn create_rootfile_instructions(
     Ok(instructions)
 }
 
-fn transpile(
+pub(crate) fn transpile(
     inst: &Instruction,
     id: U256,
     group_id: U256,
@@ -99,6 +101,25 @@ fn transpile(
             return Err(miette!("aborting"));
         }
     };
+
+    for (name, supplied) in &inst.definition.inputs {
+        let declared = blueprint.inputs.values().find(|input| &input.name == name).ok_or_else(|| {
+            miette!(
+                "instruction \"{}\" supplies input \"{name}\", which blueprint {} does not declare",
+                inst.definition.label,
+                blueprint.path.display()
+            )
+        })?;
+        if supplied.r#type != declared.r#type {
+            return Err(miette!(
+                "instruction \"{}\": input \"{name}\" is {}, but blueprint {} declares {}",
+                inst.definition.label,
+                supplied.r#type,
+                blueprint.path.display(),
+                declared.r#type
+            ));
+        }
+    }
 
     let (_name, action) = blueprint
         .actions
@@ -120,12 +141,15 @@ fn transpile(
 
         let args = transpile_parameters(
             &call.parameters,
-            &action.returns_mapping,
-            &action.input_slots,
-            &inst.definition,
-            &return_values,
-            &mut checked_slots,
-            &blueprint,
+            &mut Context {
+                planner: &mut planner,
+                returns_mapping: &action.returns_mapping,
+                input_slots: &action.input_slots,
+                definition: &inst.definition,
+                return_values: &return_values,
+                checked_slots: &mut checked_slots,
+                blueprint: &blueprint,
+            },
         );
 
         let (return_types, command_flags) = resolve_call_metadata(call);
@@ -206,77 +230,58 @@ fn transpile_target(
     }
 }
 
-fn transpile_parameters(
-    parameters: &[BlueprintParameter],
-    returns_mapping: &HashMap<String, usize>,
-    input_slots: &IndexMap<String, BlueprintInputSlot>,
-    definition: &InstructionDefinition,
-    return_values: &[ReturnValue],
-    checked_slots: &mut Vec<Bytes>,
-    blueprint: &Blueprint,
-) -> Vec<Value> {
-    let mut result = Vec::new();
-
-    for parameter in parameters.iter() {
-        let value = transpile_parameter(
-            parameter,
-            returns_mapping,
-            input_slots,
-            definition,
-            return_values,
-            checked_slots,
-            blueprint,
-        );
-
-        result.push(value);
-    }
-
-    result
+/// What parameter transpilation reads, and where it records committed state and helper calls.
+struct Context<'a> {
+    planner: &'a mut Planner,
+    returns_mapping: &'a HashMap<String, usize>,
+    input_slots: &'a IndexMap<String, BlueprintInputSlot>,
+    definition: &'a InstructionDefinition,
+    return_values: &'a [ReturnValue],
+    checked_slots: &'a mut Vec<Bytes>,
+    blueprint: &'a Blueprint,
 }
 
-fn transpile_parameter(
-    parameter: &BlueprintParameter,
-    returns_mapping: &HashMap<String, usize>,
-    input_slots: &IndexMap<String, BlueprintInputSlot>,
-    definition: &InstructionDefinition,
-    return_values: &[ReturnValue],
-    checked_slots: &mut Vec<Bytes>,
-    blueprint: &Blueprint,
-) -> Value {
+fn transpile_parameters(parameters: &[BlueprintParameter], ctx: &mut Context) -> Vec<Value> {
+    parameters
+        .iter()
+        .map(|parameter| transpile_parameter(parameter, ctx))
+        .collect()
+}
+
+fn find_input<'a>(ctx: &'a Context, name: &str) -> &'a SolValue {
+    ctx.definition
+        .inputs
+        .iter()
+        .find(|(label, _)| *label == name)
+        .map(|(_, input)| input)
+        .unwrap_or_else(|| {
+            let available: Vec<_> = ctx.definition.inputs.keys().collect();
+            let required: Vec<_> = ctx.blueprint.inputs.keys().collect();
+            panic!(
+                "could not find input \"{name}\"\n  \
+                 blueprint: {}\n  \
+                 available inputs: {available:?}\n  \
+                 required inputs: {required:?}",
+                ctx.blueprint.path.display()
+            )
+        })
+}
+
+fn transpile_parameter(parameter: &BlueprintParameter, ctx: &mut Context) -> Value {
     match parameter {
         BlueprintParameter::Input(name) => {
-            let (_, input) = definition
-                .inputs
-                .iter()
-                .find(|(label, _)| label == &name)
-                .unwrap_or_else(|| {
-                    let available: Vec<_> = definition.inputs.keys().collect();
-                    let required: Vec<_> = blueprint.inputs.keys().collect();
-                    panic!(
-                        "could not find input \"{name}\"\n  \
-                         blueprint: {}\n  \
-                         available inputs: {available:?}\n  \
-                         required inputs: {required:?}",
-                        blueprint.path.display()
-                    )
-                });
+            let input = find_input(ctx, name);
 
-            let encoded: Bytes = match input.r#type {
-                DynSolType::String => input
-                    .value
-                    .abi_encode_params()
-                    .into_iter()
-                    .skip(32)
-                    .collect(),
-                _ => input.value.abi_encode_params().into(),
-            };
+            // inputs are one word (checked when parsing both sides)
+            let encoded: Bytes = input.value.abi_encode_params().into();
 
-            checked_slots.push(encoded.clone());
+            ctx.checked_slots.push(encoded.clone());
 
-            Value::Literal(Literal::new(encoded, input.value.is_dynamic()))
+            Value::Literal(Literal::new(encoded, false))
         }
         BlueprintParameter::InputSlot(name) => {
-            let (name, input) = input_slots
+            let (name, input) = ctx
+                .input_slots
                 .iter()
                 .find(|(label, _)| label == &name)
                 .expect("could not find input slot");
@@ -286,10 +291,12 @@ fn transpile_parameter(
             Value::Literal(Literal::new(name_hash, is_type_dynamic(&input.r#type)))
         }
         BlueprintParameter::Return(name) => {
-            let index = returns_mapping
+            let index = ctx
+                .returns_mapping
                 .get(name)
                 .expect("could not get return index");
-            let ret = return_values
+            let ret = ctx
+                .return_values
                 .get(*index)
                 .expect("return index does not exist")
                 .clone();
@@ -297,70 +304,124 @@ fn transpile_parameter(
             Value::Return(ret)
         }
         BlueprintParameter::DynamicArray(params) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::Array(values)
+            Value::Array(params.iter().map(|p| transpile_parameter(p, ctx)).collect())
         }
         BlueprintParameter::Tuple(params) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::Tuple(values)
+            Value::Tuple(params.iter().map(|p| transpile_parameter(p, ctx)).collect())
         }
         BlueprintParameter::FixedArray(params, _) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::FixedArray(values)
+            Value::FixedArray(params.iter().map(|p| transpile_parameter(p, ctx)).collect())
         }
-        BlueprintParameter::Scalar(value) => {
-            let mut encoded = value.value.abi_encode();
+        BlueprintParameter::Scalar(value) => scalar_literal(&value.value, ctx),
+        BlueprintParameter::AbiEncodeCall(call) => transpile_abi_encode_call(call, ctx),
+    }
+}
 
-            if matches!(value.value, DynSolValue::String(_) | DynSolValue::Bytes(_)) {
-                encoded = encoded.iter().skip(32).cloned().collect();
-            }
+/// A compile-time value as a committed state literal.
+fn scalar_literal(value: &DynSolValue, ctx: &mut Context) -> Value {
+    let mut encoded = value.abi_encode();
 
-            checked_slots.push(encoded.clone().into());
+    if matches!(value, DynSolValue::String(_) | DynSolValue::Bytes(_)) {
+        encoded = encoded.iter().skip(32).cloned().collect();
+    }
 
-            Value::Literal(Literal::new(encoded.into(), value.value.is_dynamic()))
+    ctx.checked_slots.push(encoded.clone().into());
+
+    Value::Literal(Literal::new(encoded.into(), value.is_dynamic()))
+}
+
+/// The value of a parameter if it is known at compile time.
+fn const_value(parameter: &BlueprintParameter, ctx: &Context) -> Option<DynSolValue> {
+    match parameter {
+        BlueprintParameter::Scalar(value) => Some(value.value.clone()),
+        BlueprintParameter::Input(name) => Some(find_input(ctx, name).value.clone()),
+        BlueprintParameter::Return(_) | BlueprintParameter::InputSlot(_) => None,
+        BlueprintParameter::Tuple(params) => params
+            .iter()
+            .map(|p| const_value(p, ctx))
+            .collect::<Option<_>>()
+            .map(DynSolValue::Tuple),
+        BlueprintParameter::DynamicArray(params) => params
+            .iter()
+            .map(|p| const_value(p, ctx))
+            .collect::<Option<_>>()
+            .map(DynSolValue::Array),
+        BlueprintParameter::FixedArray(params, _) => params
+            .iter()
+            .map(|p| const_value(p, ctx))
+            .collect::<Option<_>>()
+            .map(DynSolValue::FixedArray),
+        BlueprintParameter::AbiEncodeCall(call) => {
+            let args = call
+                .parameters
+                .iter()
+                .map(|p| const_value(p, ctx))
+                .collect::<Option<Vec<_>>>()?;
+            let mut calldata = call.selector.to_vec();
+            calldata.extend(DynSolValue::Tuple(args).abi_encode_params());
+            Some(DynSolValue::Bytes(calldata))
         }
+    }
+}
+
+/// `abi_encode_call`: a literal when every argument is known at compile time; otherwise
+/// helper calls that splice the runtime words, passed as a dynamic tuple (see
+/// [`abi_encode_call`]). The parser guarantees the runtime case only has single-word
+/// static arguments and a `math_helper`.
+fn transpile_abi_encode_call(call: &AbiEncodeCall, ctx: &mut Context) -> Value {
+    let wrapped = BlueprintParameter::AbiEncodeCall(Box::new(call.clone()));
+    if let Some(calldata) = const_value(&wrapped, ctx) {
+        return scalar_literal(&calldata, ctx);
+    }
+
+    let args: Vec<ArgWord<Value>> = call
+        .parameters
+        .iter()
+        .map(|p| match const_value(p, ctx) {
+            Some(value) => ArgWord::Const(FixedBytes::from_slice(&value.abi_encode())),
+            None => ArgWord::Runtime(transpile_parameter(p, ctx)),
+        })
+        .collect();
+
+    let helper = transpile_target(
+        call.math_helper
+            .as_ref()
+            .expect("parser requires math_helper for runtime arguments"),
+        ctx.definition,
+        ctx.blueprint,
+    );
+    let mut emitter = PlannerEmitter { ctx, helper };
+    let (length, words) = abi_encode_call::lower(&mut emitter, call.selector, args);
+
+    let length = emitter.literal(U256::from(length));
+    Value::DynamicTuple(std::iter::once(length).chain(words).collect())
+}
+
+struct PlannerEmitter<'c, 'a> {
+    ctx: &'c mut Context<'a>,
+    helper: Address,
+}
+
+impl Emitter for PlannerEmitter<'_, '_> {
+    type Value = Value;
+
+    fn literal(&mut self, word: U256) -> Value {
+        scalar_literal(&DynSolValue::Uint(word, 256), self.ctx)
+    }
+
+    fn op(&mut self, op: MathOp, a: Value, b: Value) -> Value {
+        self.ctx
+            .planner
+            .call(
+                self.helper,
+                CommandFlags::CALL,
+                op.selector().into(),
+                vec![a, b],
+                DynSolType::Uint(256),
+                None,
+            )
+            .expect("could not add helper call")
+            .into()
     }
 }
 

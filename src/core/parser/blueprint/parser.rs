@@ -4,10 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use alloy::{
-    dyn_abi::DynSolType,
-    primitives::{Address, Selector, keccak256},
-};
+use alloy::{dyn_abi::DynSolType, primitives::Address};
 use indexmap::IndexMap;
 use miette::{NamedSource, miette};
 use regex::Regex;
@@ -22,7 +19,7 @@ use crate::{
         },
         common::{Marked, Parser},
         helpers,
-        sol_types::{YamlSolValue, parse_sol_value_marked},
+        sol_types::{ONE_WORD_INPUT_HINT, YamlSolValue, is_one_word, parse_sol_value_marked},
     },
     meta_sol_types::MetaDynSolType,
 };
@@ -34,6 +31,15 @@ pub struct BlueprintParser {
 }
 
 impl BlueprintParser {
+    #[cfg(test)]
+    pub(crate) fn from_source(source: String) -> Self {
+        Self {
+            file: "test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+    }
+
     pub fn new<P>(file: P) -> miette::Result<Self>
     where
         P: Into<PathBuf>,
@@ -142,8 +148,15 @@ impl BlueprintParser {
                 .ok_or(self.error(key.span, "input has invalid name"))?;
 
             let key = format!("${{inputs.{name}}}");
-            let value = self.blueprint_input(name, value)?;
-            map.insert(key, BlueprintTemplate::Input(value));
+            let input = self.blueprint_input(name, value)?;
+            if !is_one_word(&input.r#type) {
+                let r#type = self.get_type(value, "type")?;
+                Err(self.error(
+                    r#type.span,
+                    format!("{}: {ONE_WORD_INPUT_HINT}", r#type.inner),
+                ))?;
+            }
+            map.insert(key, BlueprintTemplate::Input(input));
         }
 
         Ok(map)
@@ -421,19 +434,14 @@ impl BlueprintParser {
 
             let target = self.blueprint_target(elem, templates)?;
 
-            let str_selector: String = self
-                .get_str(elem, "selector")?
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let hash_selector = keccak256(str_selector);
-            let selector = Selector::from(hash_selector.first_chunk().unwrap());
+            let (selector, signature_types) = self.selector(elem)?;
 
             let parameters_field = elem
                 .data
                 .as_mapping_get("parameters")
                 .ok_or(self.error(elem.span, "'parameters' is missing"))?;
             let parameters = self.blueprint_parameters(parameters_field, templates)?;
+            self.check_parameters(parameters_field, &parameters, &signature_types)?;
 
             let r#return = if let Some(return_field) = elem.data.as_mapping_get("return") {
                 let name = self.get_str(return_field, "name")?;
@@ -488,7 +496,7 @@ impl BlueprintParser {
         Ok(vec)
     }
 
-    fn blueprint_parameter<'a>(
+    pub(super) fn blueprint_parameter<'a>(
         &self,
         field: &'a MarkedYaml<'a>,
         templates: &BTreeMap<String, BlueprintTemplate>,
@@ -497,6 +505,10 @@ impl BlueprintParser {
             .data
             .as_mapping_get("value")
             .ok_or_else(|| self.error(field.span, "parameter has no value"))?;
+
+        if let Some(node) = value_field.data.as_mapping_get("abi_encode_call") {
+            return self.abi_encode_call(field, node, templates);
+        }
 
         // for simple types we can parse the template variable directly
         if !value_field.is_sequence() {
@@ -531,12 +543,13 @@ impl BlueprintParser {
 
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .zip(&inner)
+                    .map(|(elem, ty)| self.element_parameter(elem, ty, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::Tuple(params))
             }
-            DynSolType::FixedArray(_, length) => {
+            DynSolType::FixedArray(inner, length) => {
                 if sequence.len() != length {
                     return Err(self
                         .error(value_field, "does not match fixed array length")
@@ -545,15 +558,15 @@ impl BlueprintParser {
 
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .map(|elem| self.element_parameter(elem, &inner, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::FixedArray(params, length))
             }
-            DynSolType::Array(_) => {
+            DynSolType::Array(inner) => {
                 let params = sequence
                     .iter()
-                    .map(|elem| self.blueprint_parameter(elem, templates))
+                    .map(|elem| self.element_parameter(elem, &inner, templates))
                     .collect::<miette::Result<Vec<_>>>()?;
 
                 Ok(BlueprintParameter::DynamicArray(params))
@@ -563,6 +576,24 @@ impl BlueprintParser {
                 "only Array | FixedArray | Tuple are allowed here",
             ))?,
         }
+    }
+
+    /// An element of an array or tuple parameter, whose declared type must be the one its
+    /// parent type implies (an `uint256[]` cannot hold a `string`).
+    fn element_parameter<'a>(
+        &self,
+        elem: &'a MarkedYaml<'a>,
+        expected: &DynSolType,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<BlueprintParameter> {
+        let declared = self.get_type(elem, "type")?;
+        if &declared.inner != expected {
+            Err(self.error(
+                declared.span,
+                format!("expected element type {expected}, got {}", declared.inner),
+            ))?;
+        }
+        self.blueprint_parameter(elem, templates)
     }
 
     /// Parses a field that can hold a raw value or a template variable
@@ -707,7 +738,8 @@ impl BlueprintParser {
     ) -> miette::Result<BlueprintInput> {
         let r#type = self.get_type(field, "type")?;
 
-        // Reject complex dynamic types (arrays, tuples) but allow:
+        // `inputs:` are further restricted to one word (see `inputs`). Input slots also go
+        // through here. Reject complex dynamic types (arrays, tuples) but allow:
         // - Bytes and String (dynamic but valid as inputs)
         // - CustomStructs (used for meta types like SwapData)
         let is_allowed_dynamic = matches!(r#type.inner, DynSolType::Bytes | DynSolType::String);
@@ -839,5 +871,82 @@ actions:
                 "expected {expected:?} in {error:?}"
             );
         }
+    }
+
+    fn parse_abi_encode_call(
+        parameters: &str,
+        math_helper: &str,
+    ) -> miette::Result<super::Blueprint> {
+        let source = format!(
+            r#"protocol: test
+inputs:
+  to:
+    type: address
+actions:
+  use:
+    calls:
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "balance()"
+        parameters: []
+        return:
+          name: "amount"
+          type: "uint256"
+      - target: "0x0000000000000000000000000000000000000001"
+        selector: "exec(bytes)"
+        parameters:
+          - type: "bytes"
+            value:
+              abi_encode_call:
+                selector: "transfer(address,uint256)"
+{math_helper}
+                parameters:
+{parameters}
+"#
+        );
+        BlueprintParser {
+            file: "abi-encode-call-test.yaml".into(),
+            source,
+            template_regex: Regex::new(r"\$\{(\w+)\.(\w+)(?:\.(\w*))?\}").unwrap(),
+        }
+        .parse()
+    }
+
+    const HELPER: &str =
+        "                math_helper: \"0x3D623B199E290358416415eA7e05B635E442e3c0\"";
+    const TO: &str = "                  - type: address\n                    value: ${inputs.to}";
+
+    #[test]
+    fn abi_encode_call_accepts_runtime_parameters_with_a_helper() {
+        let params = format!(
+            "{TO}\n                  - type: uint256\n                    value: ${{returns.amount}}"
+        );
+        parse_abi_encode_call(&params, HELPER).unwrap();
+    }
+
+    #[test]
+    fn abi_encode_call_requires_a_helper_for_runtime_parameters() {
+        let params = format!(
+            "{TO}\n                  - type: uint256\n                    value: ${{returns.amount}}"
+        );
+        let err = parse_abi_encode_call(&params, "").unwrap_err();
+        assert!(format!("{err:?}").contains("math_helper is required"));
+    }
+
+    #[test]
+    fn abi_encode_call_compile_time_needs_no_helper() {
+        let params =
+            format!("{TO}\n                  - type: uint256\n                    value: \"7\"");
+        parse_abi_encode_call(&params, "").unwrap();
+    }
+
+    #[test]
+    fn abi_encode_call_rejects_parameters_that_do_not_match_the_signature() {
+        let params =
+            format!("{TO}\n                  - type: uint128\n                    value: \"7\"");
+        let err = parse_abi_encode_call(&params, "").unwrap_err();
+        assert!(format!("{err:?}").contains("does not match the signature"));
+
+        let err = parse_abi_encode_call(TO, "").unwrap_err();
+        assert!(format!("{err:?}").contains("signature has 2 parameters, 1 given"));
     }
 }

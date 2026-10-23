@@ -30,6 +30,19 @@ pub enum BlueprintParameter {
     Tuple(Vec<BlueprintParameter>),        // A tuple of parameters.
     DynamicArray(Vec<BlueprintParameter>), // A dynamic array.
     FixedArray(Vec<BlueprintParameter>, usize), // A fixed-size array.
+    AbiEncodeCall(Box<AbiEncodeCall>),     // `bytes` built as `selector ‖ abi.encode(args)`.
+}
+
+/// A `bytes` parameter whose value is the calldata of another call:
+/// `abi.encodeWithSignature(signature, parameters...)`.
+///
+/// Folded into a literal when every parameter is known at compile time. Otherwise the
+/// runtime words are spliced on-chain with `math_helper` (see `core::abi_encode_call`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AbiEncodeCall {
+    pub selector: Selector,
+    pub parameters: Vec<BlueprintParameter>,
+    pub math_helper: Option<BlueprintTarget>,
 }
 
 impl From<DynSolValue> for BlueprintParameter {
@@ -69,7 +82,25 @@ impl BlueprintParameter {
             | BlueprintParameter::FixedArray(params, _) => {
                 params.iter().flat_map(|p| p.input_slots()).collect()
             }
+            BlueprintParameter::AbiEncodeCall(call) => call
+                .parameters
+                .iter()
+                .flat_map(|p| p.input_slots())
+                .collect(),
             _ => vec![],
+        }
+    }
+
+    /// `true` if the value is only known at runtime (a return value or an input slot),
+    /// directly or anywhere inside.
+    pub fn is_runtime(&self) -> bool {
+        match self {
+            BlueprintParameter::Return(_) | BlueprintParameter::InputSlot(_) => true,
+            BlueprintParameter::Input(_) | BlueprintParameter::Scalar(_) => false,
+            BlueprintParameter::Tuple(params)
+            | BlueprintParameter::DynamicArray(params)
+            | BlueprintParameter::FixedArray(params, _) => params.iter().any(Self::is_runtime),
+            BlueprintParameter::AbiEncodeCall(call) => call.parameters.iter().any(Self::is_runtime),
         }
     }
 }
