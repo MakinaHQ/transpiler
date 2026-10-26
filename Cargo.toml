@@ -55,7 +55,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 
 # weiroll
-weiroll = { git = "https://github.com/MakinaHQ/weiroll-rs.git", rev = "325daf7025851bf786253a7a395f6c278d1434fb" }
+weiroll = { git = "https://github.com/MakinaHQ/weiroll-rs.git", rev = "656a9c9cc93a63a094cd7f9035c01f25cd1ba640" }
 
 # formatting
 dprint-plugin-toml = "0.7.0"
