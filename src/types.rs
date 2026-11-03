@@ -74,6 +74,7 @@ pub struct RootfileInputSlot {
 #[serde(rename_all = "snake_case")]
 pub enum InputType {
     Amount { token: Address },
+    Relative {},
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

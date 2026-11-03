@@ -433,6 +433,7 @@ fn transpile_input_slots(
                     };
                     Some(InputType::Amount { token })
                 }
+                Some(BlueprintInputType::Relative {}) => Some(InputType::Relative {}),
                 None => None,
             };
             Ok(RootfileInputSlot {
