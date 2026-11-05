@@ -95,6 +95,7 @@ pub struct BlueprintInputSlot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlueprintInputType {
     Amount { token: BlueprintTarget },
+    Relative {},
 }
 
 #[derive(Debug, Clone, PartialEq)]

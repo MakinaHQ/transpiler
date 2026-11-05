@@ -321,7 +321,7 @@ impl BlueprintParser {
             return Err(self
                 .error(
                     input_type.span,
-                    "input_type must contain exactly one 'amount' variant",
+                    "input_type must contain exactly one variant ('amount' or 'relative')",
                 )
                 .into());
         }
@@ -348,11 +348,19 @@ impl BlueprintParser {
                     token: self.input_type_token(token, templates)?,
                 }
             }
+            "relative" => {
+                if !config_map.is_empty() {
+                    return Err(self
+                        .error(config.span, "relative input_type requires an empty mapping")
+                        .into());
+                }
+                BlueprintInputType::Relative {}
+            }
             _ => {
                 return Err(self
                     .error(
                         variant.span,
-                        "unknown input_type variant; expected 'amount'",
+                        "unknown input_type variant; expected 'amount' or 'relative'",
                     )
                     .into());
             }
@@ -810,6 +818,44 @@ actions:
                 ),
             })
         );
+    }
+
+    #[test]
+    fn relative_requires_an_empty_mapping_on_unsigned_integer_slots() {
+        for slot_type in ["uint8", "uint16", "uint256"] {
+            let blueprint = parse_input_type(slot_type, "          relative: {}").unwrap();
+            assert_eq!(
+                blueprint.actions["use"].input_slots["value"].input_type,
+                Some(BlueprintInputType::Relative {})
+            );
+        }
+        for slot_type in ["int256", "address", "bool", "bytes", "string"] {
+            let error = parse_input_type(slot_type, "          relative: {}").unwrap_err();
+            assert!(
+                format!("{error:?}").contains("requires an unsigned integer slot"),
+                "unexpected error for {slot_type}: {error:?}"
+            );
+        }
+        assert!(parse_input_type("uint256[]", "          relative: {}").is_err());
+        for annotation in [
+            "null",
+            "relative",
+            "[]",
+            "{}",
+            "{relative: null}",
+            "{relative: 10000}",
+            "{relative: []}",
+            "{relative: {token: '0x0000000000000000000000000000000000000002'}}",
+            "{relative: {unit: bps}}",
+            "{relative: {denominator: 10000}}",
+            "{relative: {default: 5000}}",
+            "{relative: {}, amount: {token: '0x0000000000000000000000000000000000000002'}}",
+        ] {
+            assert!(
+                parse_input_type("uint256", &format!("          {annotation}")).is_err(),
+                "accepted malformed annotation: {annotation}"
+            );
+        }
     }
 
     #[test]
