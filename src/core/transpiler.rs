@@ -1,31 +1,23 @@
-use indexmap::IndexMap;
 use miette::miette;
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use alloy::{
-    dyn_abi::{DynSolType, DynSolValue},
-    primitives::{Address, Bytes, FixedBytes, U128, U256, keccak256},
-};
-use weiroll::{
-    Planner,
-    cmds::{CommandFlags, Literal, ReturnValue, Value},
-};
+use alloy::primitives::{Address, U256};
 
 use crate::types::InstructionType;
 use crate::{
-    core::parser::{
-        blueprint::{
-            Blueprint, BlueprintAction, BlueprintCall, BlueprintInputSlot, BlueprintInputType,
-            BlueprintParameter, BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
+    core::{
+        codegen::codegen,
+        ir,
+        parser::{
+            blueprint::{
+                Blueprint, BlueprintAction, BlueprintInputType, BlueprintParameter,
+                BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
+            },
+            positions::types::{Instruction, InstructionDefinition, Position},
         },
-        positions::types::{Instruction, InstructionDefinition, Position},
     },
     token_list::TokenInfo,
-    types::{
-        InputType, MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile,
-        RootfileInputSlot,
-    },
+    types::{InputType, MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile},
 };
 
 /// Transpile positions into a makina rootfile. Include tokens used in the transpilation.
@@ -100,6 +92,21 @@ fn transpile(
         }
     };
 
+    let bound = bind(&blueprint, inst, id, group_id, position_tokens)?;
+    let makina_inst = codegen(&bound)?;
+
+    Ok((bound.protocol, bound.name, bound.label, makina_inst))
+}
+
+/// Resolves the names an instruction's blueprint action refers to (inputs, returns, input
+/// slots) into a bound [ir::Instruction].
+fn bind(
+    blueprint: &Blueprint,
+    inst: &Instruction,
+    id: U256,
+    group_id: U256,
+    position_tokens: &[Address],
+) -> miette::Result<ir::Instruction> {
     let (_name, action) = blueprint
         .actions
         .iter()
@@ -111,73 +118,65 @@ fn transpile(
             )
         });
 
-    let mut planner = Planner::default();
-    let mut checked_slots = Vec::new();
-    let mut return_values = Vec::new();
+    let mut calls: Vec<ir::Call> = Vec::new();
 
     for call in action.calls.iter() {
-        let target = transpile_target(&call.target, &inst.definition, &blueprint);
+        let target = bind_target(&call.target, &inst.definition, blueprint);
 
-        let args = transpile_parameters(
-            &call.parameters,
-            &action.returns_mapping,
-            &action.input_slots,
-            &inst.definition,
-            &return_values,
-            &mut checked_slots,
-            &blueprint,
-        );
+        let args = call
+            .parameters
+            .iter()
+            .map(|parameter| {
+                bind_parameter(parameter, action, calls.len(), &inst.definition, blueprint)
+            })
+            .collect();
 
-        let (return_types, command_flags) = resolve_call_metadata(call);
-
-        return_values.push(
-            planner
-                .call(
-                    target,
-                    command_flags,
-                    call.selector.into(),
-                    args,
-                    return_types,
-                    None, // native value is always None
-                )
-                .expect("could not add call"),
-        );
+        calls.push(ir::Call {
+            target,
+            selector: call.selector,
+            args,
+            returns: call.r#return.as_ref().map(|ret| ret.r#type.clone()),
+        });
     }
 
-    let reserved_slots = transpile_reserved_slots(action, &return_values, &mut checked_slots);
-    let inputs_slots = transpile_input_slots(action, &inst.definition)?;
-    let (commands, state) = planner
-        .plan(reserved_slots)
-        .map_err(|err| miette!("{}", err))?;
-    let bitmap = generate_bitmap(&state, &checked_slots);
+    let outputs = action
+        .reserved_slots
+        .iter()
+        .map(|rs| match rs {
+            BlueprintReservedSlot::Return(name) => {
+                ir::Output::Return(bind_return(name, action, calls.len()))
+            }
+            BlueprintReservedSlot::Scalar(value) => ir::Output::Literal(value.value.clone()),
+        })
+        .collect();
 
-    let protocol = blueprint.protocol.clone();
-    let label = inst.definition.label.clone();
-    let name = inst
-        .definition
-        .override_name
-        .clone()
-        .unwrap_or(inst.definition.name.clone());
+    let slots = bind_slots(action, &inst.definition)?;
 
-    let makina_inst = MakinaInstruction {
+    Ok(ir::Instruction {
+        protocol: blueprint.protocol.clone(),
+        name: inst
+            .definition
+            .override_name
+            .clone()
+            .unwrap_or(inst.definition.name.clone()),
+        label: inst.definition.label.clone(),
         position_id: id,
-        description: inst.description.clone(),
-        tags: vec![],
-        is_debt: inst.is_debt,
         group_id,
+        is_debt: inst.is_debt,
         instruction_type: inst.instruction_type,
         affected_tokens: inst.affected_tokens.clone(),
         position_tokens: Vec::from(position_tokens),
-        commands: commands.iter().map(|c| FixedBytes::from_slice(c)).collect(),
-        state,
-        bitmap,
-        inputs_slots,
-    };
-
-    Ok((protocol, name, label, makina_inst))
+        description: inst.description.clone(),
+        tags: vec![],
+        action: ir::Action {
+            calls,
+            outputs,
+            slots,
+        },
+    })
 }
 
-fn transpile_target(
+fn bind_target(
     target: &BlueprintTarget,
     definition: &InstructionDefinition,
     blueprint: &Blueprint,
@@ -206,43 +205,21 @@ fn transpile_target(
     }
 }
 
-fn transpile_parameters(
-    parameters: &[BlueprintParameter],
-    returns_mapping: &HashMap<String, usize>,
-    input_slots: &IndexMap<String, BlueprintInputSlot>,
-    definition: &InstructionDefinition,
-    return_values: &[ReturnValue],
-    checked_slots: &mut Vec<Bytes>,
-    blueprint: &Blueprint,
-) -> Vec<Value> {
-    let mut result = Vec::new();
-
-    for parameter in parameters.iter() {
-        let value = transpile_parameter(
-            parameter,
-            returns_mapping,
-            input_slots,
-            definition,
-            return_values,
-            checked_slots,
-            blueprint,
-        );
-
-        result.push(value);
-    }
-
-    result
-}
-
-fn transpile_parameter(
+/// `available_returns` is the number of calls before the one whose parameter is bound.
+fn bind_parameter(
     parameter: &BlueprintParameter,
-    returns_mapping: &HashMap<String, usize>,
-    input_slots: &IndexMap<String, BlueprintInputSlot>,
+    action: &BlueprintAction,
+    available_returns: usize,
     definition: &InstructionDefinition,
-    return_values: &[ReturnValue],
-    checked_slots: &mut Vec<Bytes>,
     blueprint: &Blueprint,
-) -> Value {
+) -> ir::Operand {
+    let bind_all = |params: &[BlueprintParameter]| {
+        params
+            .iter()
+            .map(|param| bind_parameter(param, action, available_returns, definition, blueprint))
+            .collect()
+    };
+
     match parameter {
         BlueprintParameter::Input(name) => {
             let (_, input) = definition
@@ -261,157 +238,43 @@ fn transpile_parameter(
                     )
                 });
 
-            let encoded: Bytes = match input.r#type {
-                DynSolType::String => input
-                    .value
-                    .abi_encode_params()
-                    .into_iter()
-                    .skip(32)
-                    .collect(),
-                _ => input.value.abi_encode_params().into(),
-            };
-
-            checked_slots.push(encoded.clone());
-
-            Value::Literal(Literal::new(encoded, input.value.is_dynamic()))
+            ir::Operand::Literal(ir::Literal::Input(input.value.clone()))
         }
-        BlueprintParameter::InputSlot(name) => {
-            let (name, input) = input_slots
-                .iter()
-                .find(|(label, _)| label == &name)
-                .expect("could not find input slot");
-
-            let name_hash: Bytes = keccak256(name.as_bytes()).into();
-
-            Value::Literal(Literal::new(name_hash, is_type_dynamic(&input.r#type)))
-        }
+        BlueprintParameter::InputSlot(name) => ir::Operand::Slot(
+            action
+                .input_slots
+                .get_index_of(name)
+                .expect("could not find input slot"),
+        ),
         BlueprintParameter::Return(name) => {
-            let index = returns_mapping
-                .get(name)
-                .expect("could not get return index");
-            let ret = return_values
-                .get(*index)
-                .expect("return index does not exist")
-                .clone();
-
-            Value::Return(ret)
+            ir::Operand::Return(bind_return(name, action, available_returns))
         }
-        BlueprintParameter::DynamicArray(params) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::Array(values)
-        }
-        BlueprintParameter::Tuple(params) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::Tuple(values)
-        }
-        BlueprintParameter::FixedArray(params, _) => {
-            let mut values = Vec::new();
-
-            for param in params.iter() {
-                let value = transpile_parameter(
-                    param,
-                    returns_mapping,
-                    input_slots,
-                    definition,
-                    return_values,
-                    checked_slots,
-                    blueprint,
-                );
-                values.push(value);
-            }
-
-            Value::FixedArray(values)
-        }
+        BlueprintParameter::DynamicArray(params) => ir::Operand::Array(bind_all(params)),
+        BlueprintParameter::Tuple(params) => ir::Operand::Tuple(bind_all(params)),
+        BlueprintParameter::FixedArray(params, _) => ir::Operand::FixedArray(bind_all(params)),
         BlueprintParameter::Scalar(value) => {
-            let mut encoded = value.value.abi_encode();
-
-            if matches!(value.value, DynSolValue::String(_) | DynSolValue::Bytes(_)) {
-                encoded = encoded.iter().skip(32).cloned().collect();
-            }
-
-            checked_slots.push(encoded.clone().into());
-
-            Value::Literal(Literal::new(encoded.into(), value.value.is_dynamic()))
+            ir::Operand::Literal(ir::Literal::Scalar(value.value.clone()))
         }
     }
 }
 
-fn transpile_reserved_slots(
-    action: &BlueprintAction,
-    return_values: &[ReturnValue],
-    checked_slots: &mut Vec<Bytes>,
-) -> Vec<Value> {
-    let mut reserved_slots: Vec<_> = action
-        .reserved_slots
-        .iter()
-        .map(|rs| match rs {
-            BlueprintReservedSlot::Return(name) => {
-                let index = action
-                    .returns_mapping
-                    .get(name)
-                    .expect("could not get return index");
-                let ret = return_values
-                    .get(*index)
-                    .expect("return index does not exist")
-                    .clone();
-                Value::Return(ret)
-            }
-            BlueprintReservedSlot::Scalar(value) => {
-                let encoded: Bytes = value.value.abi_encode_params().into();
-                checked_slots.push(encoded.clone());
-                Value::Literal(Literal::new(encoded, false))
-            }
-        })
-        .collect();
-
-    reserved_slots.extend(action.input_slots.iter().map(|(name, is)| {
-        let is_dynamic = matches!(
-            is.r#type,
-            DynSolType::Bytes | DynSolType::String | DynSolType::Array(_)
-        );
-        Value::Literal(Literal::new(keccak256(name).into(), is_dynamic))
-    }));
-
-    reserved_slots
+fn bind_return(name: &str, action: &BlueprintAction, available_returns: usize) -> usize {
+    let index = *action
+        .returns_mapping
+        .get(name)
+        .expect("could not get return index");
+    assert!(index < available_returns, "return index does not exist");
+    index
 }
 
-fn transpile_input_slots(
+fn bind_slots(
     action: &BlueprintAction,
     definition: &InstructionDefinition,
-) -> miette::Result<Vec<RootfileInputSlot>> {
+) -> miette::Result<Vec<ir::Slot>> {
     action
         .input_slots
         .iter()
-        .enumerate()
-        .map(|(i, (k, v))| {
+        .map(|(k, v)| {
             let meta_type_data = v.meta_type.as_ref().map(|meta_type| MetaTypeData {
                 r#type: meta_type.to_string(),
                 name: v.meta_type_name.clone().unwrap_or_default(),
@@ -436,66 +299,15 @@ fn transpile_input_slots(
                 Some(BlueprintInputType::Relative {}) => Some(InputType::Relative {}),
                 None => None,
             };
-            Ok(RootfileInputSlot {
+            Ok(ir::Slot {
                 name: k.into(),
+                ty: v.r#type.clone(),
                 description: v.description.clone(),
-                r#type: v.r#type.clone().into(),
-                index: i + action.reserved_slots.len(),
                 input_type,
                 meta_type: meta_type_data,
             })
         })
         .collect()
-}
-
-fn generate_bitmap(state: &[Bytes], checked_slots: &[Bytes]) -> U128 {
-    let mut bitmap = 0u128;
-    for (i, s) in state.iter().enumerate() {
-        if checked_slots.contains(s) {
-            bitmap |= 1u128 << (127 - i);
-        }
-    }
-    U128::from(bitmap)
-}
-
-fn is_type_dynamic(ty: &DynSolType) -> bool {
-    match ty {
-        DynSolType::Address
-        | DynSolType::Function
-        | DynSolType::Bool
-        | DynSolType::Uint(..)
-        | DynSolType::Int(..)
-        | DynSolType::FixedBytes(..) => false,
-        DynSolType::Bytes | DynSolType::String | DynSolType::Array(_) => true,
-        DynSolType::Tuple(tuple) => tuple.iter().any(is_type_dynamic),
-        DynSolType::FixedArray(inner, _) => is_type_dynamic(inner),
-        DynSolType::CustomStruct { tuple, .. } => tuple.iter().any(is_type_dynamic),
-    }
-}
-
-fn resolve_call_metadata(call: &BlueprintCall) -> (DynSolType, CommandFlags) {
-    let mut return_type = call
-        .r#return
-        .as_ref()
-        .map(|ret| ret.r#type.clone())
-        .unwrap_or_else(|| DynSolType::Tuple(vec![DynSolType::Bool]));
-
-    // we always want the return type to be a tuple
-    if !matches!(return_type, DynSolType::Tuple(_)) {
-        return_type = DynSolType::Tuple(vec![return_type]);
-    }
-
-    let mut command_flags = CommandFlags::CALL;
-
-    if let DynSolType::Tuple(t) = return_type.clone() {
-        match t.len().cmp(&1) {
-            Ordering::Greater => command_flags |= CommandFlags::TUPLE_RETURN,
-            Ordering::Equal => return_type = t[0].clone(),
-            Ordering::Less => (),
-        }
-    };
-
-    (return_type, command_flags)
 }
 
 #[cfg(test)]
@@ -506,7 +318,10 @@ mod test {
         core::parser::positions::types::{InstructionDefinition, SolValue},
         types::{InputSlotType, InputType, InstructionType},
     };
-    use alloy::primitives::{address, map::HashMap, ruint::aliases::U128};
+    use alloy::{
+        dyn_abi::DynSolType,
+        primitives::{Bytes, address, map::HashMap, ruint::aliases::U128},
+    };
 
     use super::*;
 
@@ -526,7 +341,7 @@ mod test {
             inputs: HashMap::new(),
         };
 
-        let error = transpile_input_slots(&blueprint.actions["deposit"], &definition).unwrap_err();
+        let error = bind_slots(&blueprint.actions["deposit"], &definition).unwrap_err();
         assert!(
             error
                 .to_string()
