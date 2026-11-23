@@ -20,18 +20,20 @@ cargo build --release
 
 ## Running the Transpiler
 
+`-o`, `-t` and `--helpers` are top-level options and must come before the subcommand; only `-i` and `--lite` are accepted after it. `-o` defaults to `rootfile.toml` and the subcommand defaults to `transpile`.
+
 ```bash
 # Basic transpilation
-cargo run -p transpiler -- transpile -i input.yaml -o rootfile.toml 
+cargo run -p transpiler -- -o rootfile.toml transpile -i input.yaml
 
 # With token list
-cargo run -p transpiler -- transpile -i input.yaml -o rootfile.toml -t token_list.json
+cargo run -p transpiler -- -o rootfile.toml -t token_list.json transpile -i input.yaml
 
 # Basic check of addresses in resulting root file (requires ETHERSCAN_API_KEY)
 cargo run -p transpiler -- check -i input.yaml
 
 # Calculate merkle root (the actual hash)
-cargo run -p transpiler -- root -i input.yaml -t token_list.json
+cargo run -p transpiler -- -t token_list.json root -i input.yaml
 ```
 
 ## General notes
