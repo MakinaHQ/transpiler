@@ -29,13 +29,13 @@ cargo run -p transpiler -- -i input.yaml -o rootfile.toml -t token_list.json
 When using helper contracts:
 
 ```bash
-cargo run -p transpiler -- -i input.yaml -o rootfile.toml -h helpers.json
+cargo run -p transpiler -- -i input.yaml -o rootfile.toml --helpers helpers.json
 ```
 
 Example with test data:
 
 ```bash
-cargo run -p transpiler -- -i test_data/caliber.yaml -o output.toml -t test_data/token_lists/test.json -h test_data/helpers_list/helpers.json
+cargo run -p transpiler -- -i test_data/caliber_with_helpers_vars.yaml -o output.toml -t test_data/token_lists/test.json --helpers test_data/helpers/test.json
 ```
 
 ## DSL Format
