@@ -76,9 +76,8 @@ dependencies = [
 
 [[package]]
 name = "alloy-chains"
-version = "0.2.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c36ddb69f5e41407e7a93aead3480f7c8ff076e73d01a951ae8f7ea4542c1ca0"
+version = "0.2.39"
+source = "git+https://github.com/MakinaHQ/alloy-chains?rev=aa7a1ccd8f01196f010e556f5cdd4b9c731474a8#aa7a1ccd8f01196f010e556f5cdd4b9c731474a8"
 dependencies = [
  "alloy-primitives",
  "num_enum",

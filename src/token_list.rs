@@ -85,6 +85,17 @@ mod tests {
     }
 
     #[test]
+    fn test_xlayer_chain_name() {
+        // Token list keys are `${token_list.<chain>.<symbol>}`, so chain 196 must render as `xlayer`.
+        let token_info: TokenInfo = serde_json::from_str(
+            r#"{"chainId":196,"address":"0xB6CEceAB302E2E4948951eE7843FC24E92933061","name":"USDC","decimals":6,"symbol":"USDC"}"#,
+        )
+        .expect("Failed to deserialize TokenInfo");
+        assert_eq!(token_info.chain.id(), 196);
+        assert_eq!(token_info.chain.to_string(), "xlayer");
+    }
+
+    #[test]
     fn test_token_list_default() {
         let token_list = TokenList::default();
         assert_eq!(token_list.name, "");
