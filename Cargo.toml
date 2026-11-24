@@ -64,3 +64,8 @@ dotenv = "0.15.0"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# No alloy-chains release names X Layer (196) yet, so `${token_list.<chain>.*}` keys render as `196`.
+# Same pin as makina-rs: MakinaHQ/alloy-chains at the head of alloy-rs/chains#359. Drop once released.
+[patch.crates-io]
+alloy-chains = { git = "https://github.com/MakinaHQ/alloy-chains", rev = "aa7a1ccd8f01196f010e556f5cdd4b9c731474a8" }
