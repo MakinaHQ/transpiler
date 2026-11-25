@@ -1,0 +1,75 @@
+# Fails a PR when it changes the Merkle root or file hash of any rootfile in
+# MakinaHQ/makina-integrations, compared to tests/integration-roots.snapshot.
+# The PR comment is posted by integration-roots-comment.yaml, which runs with a
+# write token and never executes PR code, so this also works for fork PRs.
+
+name: Integration Roots
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  integration_roots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Read pinned integrations ref
+        id: ref
+        run: |
+          sha=$(sed -n 's/^integrations-ref: //p' tests/integration-roots.snapshot)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tests/integration-roots.snapshot needs an integrations-ref line"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          repository: MakinaHQ/makina-integrations
+          ref: ${{ steps.ref.outputs.sha }}
+          path: integrations
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build transpiler
+        run: cargo build --release --locked
+
+      - name: Compute roots
+        run: scripts/integration-roots.sh target/release/transpiler integrations > current.txt
+
+      # Runs even when an earlier step failed, so the PR comment never keeps a stale result.
+      - name: Compare with snapshot
+        if: always()
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p comment
+          echo "$PR_NUMBER" > comment/pr-number
+          if [ ! -s current.txt ]; then
+            printf '<!-- integration-roots -->\n### Integration rootfiles\n\n⚠️ Could not compute the roots; see the job log.\n' > comment/body.md
+            exit 1
+          fi
+          status=0
+          scripts/integration-roots-report.sh tests/integration-roots.snapshot current.txt > comment/body.md || status=$?
+          cat comment/body.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            diff <(grep -v '^integrations-ref:' tests/integration-roots.snapshot) current.txt || true
+            echo "::error::Integration rootfiles differ from tests/integration-roots.snapshot."
+          fi
+          exit "$status"
+
+      - name: Upload comment
+        if: always() && hashFiles('comment/body.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-roots-comment
+          path: comment/
+          retention-days: 7

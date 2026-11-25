@@ -1,0 +1,50 @@
+# Posts or updates the Integration Roots PR comment. Runs from the default branch
+# with a write token after the check finishes, including for fork PRs. It never
+# checks out or runs PR code and treats the artifact as untrusted: the PR number
+# must belong to a PR whose head is the commit that was checked.
+
+name: Integration Roots Comment
+
+on:
+  workflow_run:
+    workflows: [Integration Roots]
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: integration-roots-comment
+          path: comment
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Post or update comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr=$(head -c 16 comment/pr-number | tr -d '[:space:]')
+          [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::invalid PR number"; exit 1; }
+          pr_head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
+          [ "$pr_head" = "$HEAD_SHA" ] || { echo "PR #$pr head moved on ($pr_head), skipping"; exit 0; }
+
+          marker='<!-- integration-roots -->'
+          { echo "$marker"; grep -vF "$marker" comment/body.md | head -c 60000; } > body.md
+          comment_id=$(gh api --paginate "repos/$REPO/issues/$pr/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@body.md > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$pr/comments" -F body=@body.md > /dev/null
+          fi
