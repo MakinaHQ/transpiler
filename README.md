@@ -57,3 +57,18 @@ The transpiler supports template variables that can be used throughout YAML file
 - `${position.<var>}` - Reference position-level variables
 
 The transpiler outputs TOML rootfiles that can be used to interact with the caliber contracts.
+
+## Integration roots check
+
+CI (`.github/workflows/integration-roots.yaml`) fails a PR when it changes the Merkle root or the
+file hash of any rootfile in [makina-integrations](https://github.com/MakinaHQ/makina-integrations)
+at the commit pinned in `tests/integration-roots.snapshot`, and summarizes the differences in a PR
+comment. To accept an intended change, optionally bump `integrations-ref` and regenerate:
+
+```bash
+git clone https://github.com/MakinaHQ/makina-integrations /tmp/integrations
+git -C /tmp/integrations checkout <integrations-ref>
+cargo build --release --locked
+{ echo "integrations-ref: $(git -C /tmp/integrations rev-parse HEAD)"
+  scripts/integration-roots.sh target/release/transpiler /tmp/integrations; } > tests/integration-roots.snapshot
+```
