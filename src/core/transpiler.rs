@@ -1,7 +1,7 @@
 use miette::miette;
 use std::collections::BTreeMap;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::Address;
 
 use crate::types::InstructionType;
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
         },
     },
     token_list::TokenInfo,
-    types::{InputType, MakinaInstruction, MetaTypeData, NamedMakinaInstruction, Rootfile},
+    types::{InputType, MetaTypeData, NamedMakinaInstruction, Rootfile},
 };
 
 /// Transpile positions into a makina rootfile. Include tokens used in the transpilation.
@@ -42,24 +42,12 @@ pub fn create_rootfile_instructions(
     let mut instructions = Vec::new();
 
     for inst in &position.instructions {
-        // Note: even though Management instructions can also receive position tokens they are not actually used during execution.
-        let position_tokens = if inst.instruction_type == InstructionType::Accounting {
-            &position.position_tokens
-        } else {
-            &vec![]
-        };
-
-        let (protocol_name, instruction_name, token_name, mut inner) =
-            transpile(inst, position.id, position.group_id, position_tokens)?;
-
-        inner.description = position.description.clone();
-        inner.tags = position.get_tags(&instruction_name);
-
+        let bound = bind_instruction(position, inst)?;
         instructions.push(NamedMakinaInstruction {
-            inner,
-            instruction_name,
-            token_name,
-            protocol_name,
+            inner: codegen(&bound)?,
+            instruction_name: bound.name,
+            token_name: bound.label,
+            protocol_name: bound.protocol,
         });
     }
 
@@ -75,12 +63,7 @@ pub fn create_rootfile_instructions(
     Ok(instructions)
 }
 
-fn transpile(
-    inst: &Instruction,
-    id: U256,
-    group_id: U256,
-    position_tokens: &[Address],
-) -> miette::Result<(String, String, String, MakinaInstruction)> {
+fn bind_instruction(position: &Position, inst: &Instruction) -> miette::Result<ir::Instruction> {
     // get the blueprint of the instruction
     // we exit early and print the error to get nice diagnostics
     // this can be removed once the general parser also returns miette::Report
@@ -92,10 +75,7 @@ fn transpile(
         }
     };
 
-    let bound = bind(&blueprint, inst, id, group_id, position_tokens)?;
-    let makina_inst = codegen(&bound)?;
-
-    Ok((bound.protocol, bound.name, bound.label, makina_inst))
+    bind(&blueprint, inst, position)
 }
 
 /// Resolves the names an instruction's blueprint action refers to (inputs, returns, input
@@ -103,9 +83,7 @@ fn transpile(
 fn bind(
     blueprint: &Blueprint,
     inst: &Instruction,
-    id: U256,
-    group_id: U256,
-    position_tokens: &[Address],
+    position: &Position,
 ) -> miette::Result<ir::Instruction> {
     let (_name, action) = blueprint
         .actions
@@ -151,23 +129,28 @@ fn bind(
         .collect();
 
     let slots = bind_slots(action, &inst.definition)?;
+    let name = inst
+        .definition
+        .override_name
+        .as_ref()
+        .unwrap_or(&inst.definition.name);
 
     Ok(ir::Instruction {
         protocol: blueprint.protocol.clone(),
-        name: inst
-            .definition
-            .override_name
-            .clone()
-            .unwrap_or(inst.definition.name.clone()),
+        name: name.clone(),
         label: inst.definition.label.clone(),
-        position_id: id,
-        group_id,
+        position_id: position.id,
+        group_id: position.group_id,
         is_debt: inst.is_debt,
         instruction_type: inst.instruction_type,
         affected_tokens: inst.affected_tokens.clone(),
-        position_tokens: Vec::from(position_tokens),
-        description: inst.description.clone(),
-        tags: vec![],
+        position_tokens: if inst.instruction_type == InstructionType::Accounting {
+            position.position_tokens.clone()
+        } else {
+            Vec::new()
+        },
+        description: position.description.clone(),
+        tags: position.get_tags(name),
         action: ir::Action {
             calls,
             outputs,
@@ -320,7 +303,7 @@ mod test {
     };
     use alloy::{
         dyn_abi::DynSolType,
-        primitives::{Bytes, address, map::HashMap, ruint::aliases::U128},
+        primitives::{Bytes, U256, address, map::HashMap, ruint::aliases::U128},
     };
 
     use super::*;
@@ -367,7 +350,7 @@ mod test {
 
         let affected_tokens = vec![address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")];
         let inst = Instruction {
-            description: None,
+            description: Some("instruction description".into()),
             is_debt: false,
             affected_tokens: affected_tokens.clone(),
             instruction_type: InstructionType::Management,
@@ -381,13 +364,21 @@ mod test {
         };
 
         let id = U256::from(123);
-        let group_id = U256::from(1);
-        let position_tokens = vec![];
-        let (protocol, name, label, m) = transpile(&inst, id, group_id, &position_tokens).unwrap();
-
-        assert_eq!(protocol, "aavev3");
-        assert_eq!(name, "deposit");
-        assert_eq!(label, "weth");
+        let position = Position {
+            id,
+            group_id: U256::from(1),
+            position_tokens: affected_tokens.clone(),
+            description: None,
+            instructions: vec![inst],
+            global_tags: vec![],
+        };
+        let bound = bind_instruction(&position, &position.instructions[0]).unwrap();
+        assert_eq!(bound.description, None);
+        assert!(bound.position_tokens.is_empty());
+        assert_eq!(bound.protocol, "aavev3");
+        assert_eq!(bound.name, "deposit");
+        assert_eq!(bound.label, "weth");
+        let m = codegen(&bound).unwrap();
 
         assert_eq!(m.position_id, id);
         assert_eq!(m.affected_tokens, affected_tokens);
@@ -443,9 +434,9 @@ mod test {
         let hash = m.hash();
         let root = Rootfile::from(vec![NamedMakinaInstruction {
             inner: m.clone(),
-            instruction_name: name,
-            token_name: label,
-            protocol_name: protocol,
+            instruction_name: bound.name,
+            token_name: bound.label,
+            protocol_name: bound.protocol,
         }])
         .root();
         let mut without_input_type = m;
@@ -481,27 +472,54 @@ mod test {
         inputs.insert("account".into(), account);
 
         let inst = Instruction {
-            description: None,
+            description: Some("instruction description".into()),
             is_debt: false,
             instruction_type: InstructionType::Accounting,
             affected_tokens: affected_tokens.clone(),
             definition: InstructionDefinition {
                 inputs,
                 label: "weth".into(),
-                override_name: None,
+                override_name: Some("balance".into()),
                 name: "account".into(),
                 blueprint_path: "test_data/blueprints/account.yaml".parse().unwrap(),
             },
         };
 
         let id = U256::from(123);
-        let group_id = U256::from(1);
-        let position_tokens = vec![];
-        let (protocol, name, label, m) = transpile(&inst, id, group_id, &position_tokens).unwrap();
+        let mut position = Position {
+            id,
+            group_id: U256::from(1),
+            position_tokens: vec![address!("0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8")],
+            description: Some("position description".into()),
+            instructions: vec![inst],
+            global_tags: vec![
+                ("balance".into(), "balance tag".into()),
+                ("account".into(), "account tag".into()),
+            ],
+        };
+        let bound = bind_instruction(&position, &position.instructions[0]).unwrap();
+        assert_eq!(bound.description.as_deref(), Some("position description"));
+        assert_eq!(bound.tags, ["balance tag"]);
+        assert_eq!(bound.position_tokens, position.position_tokens);
+        assert_eq!(bound.protocol, "aavev3");
+        assert_eq!(bound.name, "balance");
+        assert_eq!(bound.label, "weth");
 
-        assert_eq!(protocol, "aavev3");
-        assert_eq!(name, "account");
-        assert_eq!(label, "weth");
+        let error = create_rootfile_instructions(&position).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no action with name \"account\"")
+        );
+        position.global_tags.pop();
+        let compiled = create_rootfile_instructions(&position).unwrap();
+        let [instruction] = compiled.as_slice() else {
+            panic!("expected one instruction")
+        };
+        assert_eq!(instruction.instruction_name, "balance");
+        let m = &instruction.inner;
+        assert_eq!(m.tags, ["balance tag"]);
+        assert_eq!(m.description.as_deref(), Some("position description"));
 
         assert_eq!(m.position_id, id);
         assert!(!m.is_debt);
