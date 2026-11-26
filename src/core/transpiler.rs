@@ -6,7 +6,7 @@ use alloy::primitives::Address;
 use crate::types::InstructionType;
 use crate::{
     core::{
-        codegen::codegen,
+        codegen::{lower_instruction, lower_program},
         ir,
         parser::{
             blueprint::{
@@ -26,41 +26,52 @@ pub fn get_rootfile_from_positions(
     positions: &[Position],
     tokens_used: &BTreeMap<String, TokenInfo>,
 ) -> miette::Result<Rootfile> {
-    let mut instructions = Vec::new();
+    lower_program(&bind_program(positions, tokens_used)?)
+}
 
-    for position in positions {
-        instructions.extend(create_rootfile_instructions(position)?);
-    }
-
-    let rootfile: Rootfile = instructions.into();
-    Ok(rootfile.with_tokens(tokens_used.clone()))
+pub fn bind_program(
+    positions: &[Position],
+    tokens_used: &BTreeMap<String, TokenInfo>,
+) -> miette::Result<ir::Program> {
+    Ok(ir::Program {
+        positions: positions
+            .iter()
+            .map(bind_position)
+            .collect::<miette::Result<_>>()?,
+        tokens: tokens_used.clone(),
+    })
 }
 
 pub fn create_rootfile_instructions(
     position: &Position,
 ) -> miette::Result<Vec<NamedMakinaInstruction>> {
-    let mut instructions = Vec::new();
+    bind_position(position)?
+        .instructions
+        .iter()
+        .map(lower_instruction)
+        .collect()
+}
 
-    for inst in &position.instructions {
-        let bound = bind_instruction(position, inst)?;
-        instructions.push(NamedMakinaInstruction {
-            inner: codegen(&bound)?,
-            instruction_name: bound.name,
-            token_name: bound.label,
-            protocol_name: bound.protocol,
-        });
-    }
+fn bind_position(position: &Position) -> miette::Result<ir::Position> {
+    let instructions = position
+        .instructions
+        .iter()
+        .map(|inst| bind_instruction(position, inst))
+        .collect::<miette::Result<Vec<_>>>()?;
 
-    // Check for invalid tags that don't match any position
     for (action, tag) in &position.global_tags {
-        if !instructions.iter().any(|i| &i.instruction_name == action) {
+        if !instructions.iter().any(|i| &i.name == action) {
             return Err(miette!(
                 "invalid tag \"{tag}:{action}\", no action with name \"{action}\" exists"
             ));
         }
     }
 
-    Ok(instructions)
+    Ok(ir::Position {
+        id: position.id,
+        group_id: position.group_id,
+        instructions,
+    })
 }
 
 fn bind_instruction(position: &Position, inst: &Instruction) -> miette::Result<ir::Instruction> {
@@ -298,6 +309,7 @@ mod test {
     use std::str::FromStr;
 
     use crate::{
+        core::codegen::codegen,
         core::parser::positions::types::{InstructionDefinition, SolValue},
         types::{InputSlotType, InputType, InstructionType},
     };
@@ -307,6 +319,100 @@ mod test {
     };
 
     use super::*;
+
+    #[test]
+    fn lowers_retained_program_without_sources() {
+        use crate::core::parser::positions::parser::PositionParser;
+        use std::{fs, path::Path};
+
+        let dir =
+            std::env::temp_dir().join(format!("transpiler-program-{}", rand::random::<u64>()));
+        let caliber = "caliber_with_token_list_vars.yaml";
+        for file in [
+            caliber,
+            "instructions/generic-deposit.yaml",
+            "blueprints/deposit.yaml",
+            "blueprints/account.yaml",
+            "token_lists/test.json",
+        ] {
+            let dest = dir.join(file);
+            fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            fs::copy(Path::new("test_data").join(file), dest).unwrap();
+        }
+        let mut parsed = PositionParser::new(
+            dir.join(caliber),
+            Some(dir.join("token_lists/test.json")),
+            None,
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+        let id = parsed.positions[0].id;
+        parsed.positions[1].id = id;
+        parsed.positions.insert(
+            1,
+            Position {
+                id,
+                group_id: U256::from(17),
+                instructions: vec![],
+                position_tokens: vec![],
+                description: None,
+                global_tags: vec![],
+            },
+        );
+
+        let program = bind_program(&parsed.positions, &parsed.tokens).unwrap();
+        drop(parsed);
+        fs::remove_dir_all(dir).unwrap();
+
+        assert_eq!(program.positions.len(), 3);
+        assert_eq!(program.positions[1].id, id);
+        assert_eq!(program.positions[1].group_id, U256::from(17));
+        let groups: Vec<Vec<_>> = program
+            .positions
+            .iter()
+            .map(|p| {
+                p.instructions
+                    .iter()
+                    .map(|i| (i.name.as_str(), i.label.as_str()))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                vec![("deposit", "dusd"), ("account", "dusd")],
+                vec![],
+                vec![("deposit", "deth"), ("account", "deth")]
+            ]
+        );
+
+        let rootfile = lower_program(&program).unwrap();
+        let keys: Vec<_> = rootfile
+            .all_instructions()
+            .into_iter()
+            .map(|i| (i.instruction_name, i.token_name))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                ("account", "deth"),
+                ("account", "dusd"),
+                ("deposit", "deth"),
+                ("deposit", "dusd")
+            ]
+            .map(|(name, label)| (name.into(), label.into()))
+        );
+        assert_eq!(rootfile.tokens.len(), 2);
+        assert_eq!(
+            rootfile.tokens["${token_list.mainnet.DUSD}"].name,
+            "Dialectic USD"
+        );
+        assert_eq!(
+            rootfile.tokens["${token_list.mainnet.DETH}"].name,
+            "Dialectic ETH"
+        );
+    }
 
     // expected outputs taken from makina rootfile generated by registry-merkletree
 

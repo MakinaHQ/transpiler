@@ -1,13 +1,32 @@
-//! Bound instruction IR: the input to weiroll codegen.
+//! Bound program IR: the input to weiroll codegen.
 //!
 //! Every name is resolved: operands are literals, slot indices or call indices.
+
+use std::collections::BTreeMap;
 
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
     primitives::{Address, Selector, U256},
 };
 
-use crate::types::{InputType, InstructionType, MetaTypeData};
+use crate::{
+    token_list::TokenInfo,
+    types::{InputType, InstructionType, MetaTypeData},
+};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    pub tokens: BTreeMap<String, TokenInfo>,
+    /// One entry per source position, in declaration order (IDs need not be unique).
+    pub positions: Vec<Position>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Position {
+    pub id: U256,
+    pub group_id: U256,
+    pub instructions: Vec<Instruction>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instruction {

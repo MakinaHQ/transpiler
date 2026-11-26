@@ -1,4 +1,4 @@
-//! Weiroll codegen: turns a bound [ir::Instruction] into a [MakinaInstruction].
+//! Weiroll codegen and rootfile assembly from bound IR.
 
 use miette::miette;
 use std::cmp::Ordering;
@@ -14,8 +14,27 @@ use weiroll::{
 
 use crate::{
     core::ir,
-    types::{MakinaInstruction, RootfileInputSlot},
+    types::{MakinaInstruction, NamedMakinaInstruction, Rootfile, RootfileInputSlot},
 };
+
+pub fn lower_program(program: &ir::Program) -> miette::Result<Rootfile> {
+    let instructions = program
+        .positions
+        .iter()
+        .flat_map(|position| &position.instructions)
+        .map(lower_instruction)
+        .collect::<miette::Result<Vec<_>>>()?;
+    Ok(Rootfile::from(instructions).with_tokens(program.tokens.clone()))
+}
+
+pub(super) fn lower_instruction(inst: &ir::Instruction) -> miette::Result<NamedMakinaInstruction> {
+    Ok(NamedMakinaInstruction {
+        inner: codegen(inst)?,
+        instruction_name: inst.name.clone(),
+        token_name: inst.label.clone(),
+        protocol_name: inst.protocol.clone(),
+    })
+}
 
 pub fn codegen(inst: &ir::Instruction) -> miette::Result<MakinaInstruction> {
     let action = &inst.action;
