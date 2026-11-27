@@ -59,6 +59,8 @@ pub struct Call {
     pub target: Address,
     pub selector: Selector,
     pub args: Vec<Operand>,
+    /// Native value (`msg.value`): a literal or a slot, never a return.
+    pub value: Option<Operand>,
     pub returns: Option<DynSolType>,
 }
 

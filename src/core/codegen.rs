@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 
 use alloy::{
     dyn_abi::{DynSolType, DynSolValue},
-    primitives::{Bytes, FixedBytes, U128, keccak256},
+    primitives::{Bytes, FixedBytes, U128, U256, keccak256},
 };
 use weiroll::{
     Planner,
@@ -51,7 +51,16 @@ pub fn codegen(inst: &ir::Instruction) -> miette::Result<MakinaInstruction> {
             &mut checked_slots,
         );
 
-        let (return_types, command_flags) = resolve_call_metadata(call);
+        let (return_types, mut command_flags) = resolve_call_metadata(call);
+
+        let value = call
+            .value
+            .as_ref()
+            .map(|value| transpile_call_value(value, &action.slots, &mut checked_slots));
+        if value.is_some() {
+            command_flags =
+                (command_flags & !CommandFlags::CALLTYPE_MASK) | CommandFlags::CALL_WITH_VALUE;
+        }
 
         return_values.push(
             planner
@@ -61,7 +70,7 @@ pub fn codegen(inst: &ir::Instruction) -> miette::Result<MakinaInstruction> {
                     call.selector.into(),
                     args,
                     return_types,
-                    None, // native value is always None
+                    value,
                 )
                 .expect("could not add call"),
         );
@@ -147,6 +156,27 @@ fn transpile_parameter(
             return_values,
             checked_slots,
         )),
+    }
+}
+
+/// Resolves a call's native value to the 32-byte word weiroll puts in the state.
+///
+/// weiroll-rs only takes the value as a `U256` literal, so a slot is passed as its
+/// placeholder word `keccak256(name)`. The planner deduplicates literals by their bytes, so
+/// the value shares the state slot of the input slot's reserved placeholder.
+fn transpile_call_value(
+    value: &ir::Operand,
+    slots: &[ir::Slot],
+    checked_slots: &mut Vec<Bytes>,
+) -> U256 {
+    match value {
+        ir::Operand::Literal(literal) => {
+            let (encoded, _) = transpile_literal(literal);
+            checked_slots.push(encoded.clone());
+            U256::from_be_slice(&encoded)
+        }
+        ir::Operand::Slot(index) => U256::from_be_bytes(keccak256(slots[*index].name.as_bytes()).0),
+        _ => unreachable!("the parser only accepts literal or slot call values"),
     }
 }
 

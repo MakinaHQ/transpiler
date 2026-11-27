@@ -133,6 +133,8 @@ pub struct BlueprintCall {
     pub target: BlueprintTarget,
     pub selector: Selector,
     pub parameters: Vec<BlueprintParameter>,
+    /// Native value (`msg.value`) sent with the call.
+    pub value: Option<BlueprintParameter>,
     pub r#return: Option<BlueprintReturn>,
 }
 

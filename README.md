@@ -46,6 +46,7 @@ Input files use a YAML-based domain-specific language with:
 - **Positions**: Individual position definitions with management/accounting instructions
 - **Blueprints**: Reusable templates via `!include` directives
 - **Parameters**: Type-safe inputs with address, uint256, and other Solidity types
+- **Native value**: A blueprint call can send native tokens (ETH, HYPE, MON, ...) with `msg_value`, set to an input slot, input, constant, or literal amount (see `test_data/blueprints/native.yaml`)
 
 ### Template Variables
 

@@ -202,7 +202,7 @@ impl BlueprintParser {
 
         let used_slots: HashSet<_> = calls
             .iter()
-            .flat_map(|c| &c.parameters)
+            .flat_map(|c| c.parameters.iter().chain(&c.value))
             .flat_map(|p| p.input_slots())
             .collect();
 
@@ -443,6 +443,12 @@ impl BlueprintParser {
                 .ok_or(self.error(elem.span, "'parameters' is missing"))?;
             let parameters = self.blueprint_parameters(parameters_field, templates)?;
 
+            let value = elem
+                .data
+                .as_mapping_get("msg_value")
+                .map(|value_field| self.blueprint_call_value(value_field, templates))
+                .transpose()?;
+
             let r#return = if let Some(return_field) = elem.data.as_mapping_get("return") {
                 let name = self.get_str(return_field, "name")?;
                 let key = format!("${{returns.{}}}", name.inner);
@@ -470,11 +476,32 @@ impl BlueprintParser {
                 target,
                 selector,
                 parameters,
+                value,
                 r#return,
             });
         }
 
         Ok((vec, returns_mapping))
+    }
+
+    /// Parses the native value (`msg.value`) sent with a call.
+    fn blueprint_call_value<'a>(
+        &self,
+        value_field: &'a MarkedYaml<'a>,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<BlueprintParameter> {
+        let r#type = Marked::new(DynSolType::Uint(256), value_field.span);
+        match self.parse_template_value(value_field, r#type, templates)? {
+            BlueprintTemplate::Input(input) => Ok(BlueprintParameter::Input(input.name)),
+            BlueprintTemplate::InputSlot(slot) => Ok(BlueprintParameter::InputSlot(slot.name)),
+            BlueprintTemplate::Constant(cons) => Ok(cons.value.into()),
+            BlueprintTemplate::Raw(raw) => Ok(raw.value.into()),
+            // weiroll-rs only accepts a value known at plan time (a literal or placeholder)
+            BlueprintTemplate::Return(_) => Err(self.error(
+                value_field,
+                "call value must be an input, input slot, constant, or raw value",
+            ))?,
+        }
     }
 
     fn blueprint_parameters<'a>(
@@ -593,6 +620,16 @@ impl BlueprintParser {
 
         debug_assert!(!field.is_sequence());
 
+        self.parse_template_value(value_field, r#type, templates)
+    }
+
+    /// Parses `value_field` as a raw value or template variable of type `r#type`.
+    fn parse_template_value<'a>(
+        &self,
+        value_field: &'a MarkedYaml<'a>,
+        r#type: Marked<DynSolType>,
+        templates: &BTreeMap<String, BlueprintTemplate>,
+    ) -> miette::Result<BlueprintTemplate> {
         // if value is not a template string
         // try parsing as raw value and return the result
         if !self.is_template(value_field) {

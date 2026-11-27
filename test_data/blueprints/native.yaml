@@ -1,0 +1,28 @@
+protocol: "native"
+
+constants:
+  weth:
+    type: "address"
+    value: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+
+inputs:
+  recipient:
+    type: "address"
+
+actions:
+  wrap_and_top_up:
+    calls:
+      - description: "Wrap native tokens into WETH"
+        target: ${constants.weth}
+        selector: "deposit()"
+        msg_value: ${input_slots.amount}
+        parameters: []
+      - description: "Send a fixed amount of native tokens to the recipient"
+        target: ${inputs.recipient}
+        selector: "deposit()"
+        msg_value: "1000000000000000"
+        parameters: []
+    input_slots:
+      amount:
+        type: "uint256"
+        description: "The amount of native tokens to wrap"
