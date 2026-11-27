@@ -1,4 +1,4 @@
-use miette::miette;
+use miette::{WrapErr, miette};
 use std::collections::BTreeMap;
 
 use alloy::primitives::Address;
@@ -13,7 +13,7 @@ use crate::{
                 Blueprint, BlueprintAction, BlueprintInputType, BlueprintParameter,
                 BlueprintParser, BlueprintReservedSlot, BlueprintTarget,
             },
-            positions::types::{Instruction, InstructionDefinition, Position},
+            positions::types::{Instruction, InstructionDefinition, Position, SolValue},
         },
     },
     token_list::TokenInfo,
@@ -96,21 +96,40 @@ fn bind(
     inst: &Instruction,
     position: &Position,
 ) -> miette::Result<ir::Instruction> {
-    let (_name, action) = blueprint
+    bind_action(blueprint, inst, position).wrap_err_with(|| {
+        format!(
+            "could not bind instruction \"{}\" (label \"{}\") of position {} with blueprint {}",
+            inst.definition.name,
+            inst.definition.label,
+            position.id,
+            blueprint.path.display()
+        )
+    })
+}
+
+fn bind_action(
+    blueprint: &Blueprint,
+    inst: &Instruction,
+    position: &Position,
+) -> miette::Result<ir::Instruction> {
+    let action = blueprint
         .actions
-        .iter()
-        .find(|(name, _)| name == &&inst.definition.name)
-        .unwrap_or_else(|| {
-            panic!(
-                "could not find blueprint with name: {}",
+        .get(&inst.definition.name)
+        .ok_or_else(|| {
+            let mut available: Vec<_> = blueprint.actions.keys().collect();
+            available.sort();
+            miette!(
+                "blueprint has no action \"{}\"\n  available actions: {available:?}",
                 inst.definition.name
             )
-        });
+        })?;
+
+    check_input_types(blueprint, &inst.definition)?;
 
     let mut calls: Vec<ir::Call> = Vec::new();
 
     for call in action.calls.iter() {
-        let target = bind_target(&call.target, &inst.definition, blueprint);
+        let target = bind_target(&call.target, &inst.definition, blueprint)?;
 
         let args = call
             .parameters
@@ -118,7 +137,7 @@ fn bind(
             .map(|parameter| {
                 bind_parameter(parameter, action, calls.len(), &inst.definition, blueprint)
             })
-            .collect();
+            .collect::<miette::Result<_>>()?;
 
         calls.push(ir::Call {
             target,
@@ -133,11 +152,11 @@ fn bind(
         .iter()
         .map(|rs| match rs {
             BlueprintReservedSlot::Return(name) => {
-                ir::Output::Return(bind_return(name, action, calls.len()))
+                Ok(ir::Output::Return(bind_return(name, action, calls.len())?))
             }
-            BlueprintReservedSlot::Scalar(value) => ir::Output::Literal(value.value.clone()),
+            BlueprintReservedSlot::Scalar(value) => Ok(ir::Output::Literal(value.value.clone())),
         })
-        .collect();
+        .collect::<miette::Result<_>>()?;
 
     let slots = bind_slots(action, &inst.definition)?;
     let name = inst
@@ -170,31 +189,68 @@ fn bind(
     })
 }
 
+/// Every supplied input the blueprint declares must have the declared Solidity type, whether
+/// or not the action uses it.
+fn check_input_types(
+    blueprint: &Blueprint,
+    definition: &InstructionDefinition,
+) -> miette::Result<()> {
+    let mut mismatches: Vec<_> = definition
+        .inputs
+        .iter()
+        .filter_map(|(name, supplied)| {
+            let declared = blueprint
+                .inputs
+                .values()
+                .find(|input| &input.name == name)?;
+            (supplied.r#type != declared.r#type).then(|| {
+                format!(
+                    "input \"{name}\" is supplied as {} but the blueprint declares {}",
+                    supplied.r#type, declared.r#type
+                )
+            })
+        })
+        .collect();
+    if mismatches.is_empty() {
+        return Ok(());
+    }
+    mismatches.sort();
+    Err(miette!("{}", mismatches.join("\n")))
+}
+
+fn find_input<'a>(
+    name: &str,
+    definition: &'a InstructionDefinition,
+    blueprint: &Blueprint,
+) -> miette::Result<&'a SolValue> {
+    definition.inputs.get(name).ok_or_else(|| {
+        let mut available: Vec<_> = definition.inputs.keys().collect();
+        available.sort();
+        let mut required: Vec<_> = blueprint.inputs.values().map(|input| &input.name).collect();
+        required.sort();
+        miette!(
+            "could not find input \"{name}\"\n  \
+             available inputs: {available:?}\n  \
+             required inputs: {required:?}"
+        )
+    })
+}
+
 fn bind_target(
     target: &BlueprintTarget,
     definition: &InstructionDefinition,
     blueprint: &Blueprint,
-) -> Address {
+) -> miette::Result<Address> {
     match target {
-        BlueprintTarget::Address(target) => *target,
+        BlueprintTarget::Address(target) => Ok(*target),
         BlueprintTarget::Input(name) => {
-            let (_, input) = definition
-                .inputs
-                .iter()
-                .find(|(label, _)| label == &name)
-                .unwrap_or_else(|| {
-                    let available: Vec<_> = definition.inputs.keys().collect();
-                    let required: Vec<_> = blueprint.inputs.keys().collect();
-                    panic!(
-                        "could not find input \"{name}\"\n  \
-                         blueprint: {}\n  \
-                         available inputs: {available:?}\n  \
-                         required inputs: {required:?}",
-                        blueprint.path.display()
-                    )
-                });
-
-            input.value.as_address().expect("target must be address")
+            let input = find_input(name, definition, blueprint)?;
+            input.value.as_address().ok_or_else(|| {
+                miette!(
+                    "call target input \"{name}\" must be an address, got {}",
+                    input.r#type
+                )
+            })
         }
     }
 }
@@ -206,59 +262,51 @@ fn bind_parameter(
     available_returns: usize,
     definition: &InstructionDefinition,
     blueprint: &Blueprint,
-) -> ir::Operand {
+) -> miette::Result<ir::Operand> {
     let bind_all = |params: &[BlueprintParameter]| {
         params
             .iter()
             .map(|param| bind_parameter(param, action, available_returns, definition, blueprint))
-            .collect()
+            .collect::<miette::Result<_>>()
     };
 
-    match parameter {
-        BlueprintParameter::Input(name) => {
-            let (_, input) = definition
-                .inputs
-                .iter()
-                .find(|(label, _)| label == &name)
-                .unwrap_or_else(|| {
-                    let available: Vec<_> = definition.inputs.keys().collect();
-                    let required: Vec<_> = blueprint.inputs.keys().collect();
-                    panic!(
-                        "could not find input \"{name}\"\n  \
-                         blueprint: {}\n  \
-                         available inputs: {available:?}\n  \
-                         required inputs: {required:?}",
-                        blueprint.path.display()
-                    )
-                });
-
-            ir::Operand::Literal(ir::Literal::Input(input.value.clone()))
-        }
+    Ok(match parameter {
+        BlueprintParameter::Input(name) => ir::Operand::Literal(ir::Literal::Input(
+            find_input(name, definition, blueprint)?.value.clone(),
+        )),
         BlueprintParameter::InputSlot(name) => ir::Operand::Slot(
             action
                 .input_slots
                 .get_index_of(name)
-                .expect("could not find input slot"),
+                .ok_or_else(|| miette!("could not find input slot \"{name}\""))?,
         ),
         BlueprintParameter::Return(name) => {
-            ir::Operand::Return(bind_return(name, action, available_returns))
+            ir::Operand::Return(bind_return(name, action, available_returns)?)
         }
-        BlueprintParameter::DynamicArray(params) => ir::Operand::Array(bind_all(params)),
-        BlueprintParameter::Tuple(params) => ir::Operand::Tuple(bind_all(params)),
-        BlueprintParameter::FixedArray(params, _) => ir::Operand::FixedArray(bind_all(params)),
+        BlueprintParameter::DynamicArray(params) => ir::Operand::Array(bind_all(params)?),
+        BlueprintParameter::Tuple(params) => ir::Operand::Tuple(bind_all(params)?),
+        BlueprintParameter::FixedArray(params, _) => ir::Operand::FixedArray(bind_all(params)?),
         BlueprintParameter::Scalar(value) => {
             ir::Operand::Literal(ir::Literal::Scalar(value.value.clone()))
         }
-    }
+    })
 }
 
-fn bind_return(name: &str, action: &BlueprintAction, available_returns: usize) -> usize {
+fn bind_return(
+    name: &str,
+    action: &BlueprintAction,
+    available_returns: usize,
+) -> miette::Result<usize> {
     let index = *action
         .returns_mapping
         .get(name)
-        .expect("could not get return index");
-    assert!(index < available_returns, "return index does not exist");
-    index
+        .ok_or_else(|| miette!("could not find return \"{name}\""))?;
+    if index >= available_returns {
+        return Err(miette!(
+            "return \"{name}\" of call {index} is used before that call returns"
+        ));
+    }
+    Ok(index)
 }
 
 fn bind_slots(
@@ -310,11 +358,12 @@ mod test {
 
     use crate::{
         core::codegen::codegen,
+        core::parser::blueprint::BlueprintInput,
         core::parser::positions::types::{InstructionDefinition, SolValue},
         types::{InputSlotType, InputType, InstructionType},
     };
     use alloy::{
-        dyn_abi::DynSolType,
+        dyn_abi::{DynSolType, DynSolValue},
         primitives::{Bytes, U256, address, map::HashMap, ruint::aliases::U128},
     };
 
@@ -435,6 +484,145 @@ mod test {
             error
                 .to_string()
                 .contains("could not resolve amount token from address input \"token\"")
+        );
+    }
+
+    #[test]
+    fn rejects_unbindable_instructions() {
+        let mut blueprint = BlueprintParser::new("test_data/blueprints/deposit.yaml")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let address_input = |value| SolValue {
+            r#type: DynSolType::Address,
+            value: DynSolValue::Address(value),
+            description: None,
+        };
+        let mut position = Position {
+            id: U256::from(7),
+            group_id: U256::ZERO,
+            position_tokens: vec![],
+            description: None,
+            instructions: vec![Instruction {
+                description: None,
+                is_debt: false,
+                affected_tokens: vec![],
+                instruction_type: InstructionType::Management,
+                definition: InstructionDefinition {
+                    blueprint_path: "test_data/blueprints/deposit.yaml".into(),
+                    name: "deposit".into(),
+                    label: "weth".into(),
+                    override_name: None,
+                    inputs: HashMap::from_iter([
+                        (
+                            "token".into(),
+                            address_input(address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")),
+                        ),
+                        (
+                            "on_behalf_of".into(),
+                            address_input(address!("0x158f44107cecf59e281a9e9f0a5680ea2867a5cd")),
+                        ),
+                    ]),
+                },
+            }],
+            global_tags: vec![],
+        };
+        let error = |blueprint: &Blueprint, position: &Position| {
+            bind(blueprint, &position.instructions[0], position)
+                .unwrap_err()
+                .chain()
+                .map(|error| format!("{error}\n"))
+                .collect::<String>()
+        };
+        fn definition(position: &mut Position) -> &mut InstructionDefinition {
+            &mut position.instructions[0].definition
+        }
+
+        definition(&mut position).name = "withdraw".into();
+        let err = error(&blueprint, &position);
+        assert!(
+            err.contains("could not bind instruction \"withdraw\" (label \"weth\") of position 7")
+        );
+        assert!(err.contains("no action \"withdraw\""));
+        definition(&mut position).name = "deposit".into();
+
+        let token = definition(&mut position).inputs.remove("token").unwrap();
+        definition(&mut position).inputs.insert(
+            "token".into(),
+            SolValue {
+                r#type: DynSolType::Uint(256),
+                value: DynSolValue::Uint(
+                    U256::from_be_slice(token.value.as_address().unwrap().as_slice()),
+                    256,
+                ),
+                description: None,
+            },
+        );
+        assert!(
+            error(&blueprint, &position).contains(
+                "input \"token\" is supplied as uint256 but the blueprint declares address"
+            )
+        );
+        definition(&mut position)
+            .inputs
+            .insert("token".into(), token);
+        bind(&blueprint, &position.instructions[0], &position).unwrap();
+
+        let on_behalf_of = definition(&mut position)
+            .inputs
+            .remove("on_behalf_of")
+            .unwrap();
+        assert!(error(&blueprint, &position).contains("could not find input \"on_behalf_of\""));
+        definition(&mut position)
+            .inputs
+            .insert("on_behalf_of".into(), on_behalf_of);
+
+        blueprint.inputs.insert(
+            "${inputs.referrer}".into(),
+            BlueprintInput {
+                name: "referrer".into(),
+                r#type: DynSolType::Uint(16),
+                description: None,
+            },
+        );
+        definition(&mut position).inputs.insert(
+            "referrer".into(),
+            SolValue {
+                r#type: DynSolType::Uint(256),
+                value: DynSolValue::Uint(U256::ZERO, 256),
+                description: None,
+            },
+        );
+        assert!(error(&blueprint, &position).contains(
+            "input \"referrer\" is supplied as uint256 but the blueprint declares uint16"
+        ));
+        definition(&mut position).inputs.insert(
+            "referrer".into(),
+            SolValue {
+                r#type: DynSolType::Uint(16),
+                value: DynSolValue::Uint(U256::ZERO, 16),
+                description: None,
+            },
+        );
+        bind(&blueprint, &position.instructions[0], &position).unwrap();
+
+        let mut set_parameter = |parameter| {
+            let action = blueprint.actions.get_mut("deposit").unwrap();
+            action.calls[0].parameters[1] = parameter;
+            action.returns_mapping.insert("balance".into(), 1);
+            error(&blueprint, &position)
+        };
+        assert!(
+            set_parameter(BlueprintParameter::InputSlot("missing".into()))
+                .contains("could not find input slot \"missing\"")
+        );
+        assert!(
+            set_parameter(BlueprintParameter::Return("balance".into()))
+                .contains("return \"balance\" of call 1 is used before that call returns")
+        );
+        assert!(
+            set_parameter(BlueprintParameter::Return("missing".into()))
+                .contains("could not find return \"missing\"")
         );
     }
 
