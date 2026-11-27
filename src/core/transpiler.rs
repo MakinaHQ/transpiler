@@ -112,18 +112,17 @@ fn bind(
     for call in action.calls.iter() {
         let target = bind_target(&call.target, &inst.definition, blueprint);
 
-        let args = call
-            .parameters
-            .iter()
-            .map(|parameter| {
-                bind_parameter(parameter, action, calls.len(), &inst.definition, blueprint)
-            })
-            .collect();
+        let bind = |parameter: &BlueprintParameter| {
+            bind_parameter(parameter, action, calls.len(), &inst.definition, blueprint)
+        };
+        let args = call.parameters.iter().map(bind).collect();
+        let value = call.value.as_ref().map(bind);
 
         calls.push(ir::Call {
             target,
             selector: call.selector,
             args,
+            value,
             returns: call.r#return.as_ref().map(|ret| ret.r#type.clone()),
         });
     }
@@ -558,6 +557,69 @@ mod test {
             .root(),
             root
         );
+    }
+
+    #[test]
+    fn test_native_value_calls() {
+        let recipient = address!("0x158f44107cecf59e281a9e9f0a5680ea2867a5cd");
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "recipient".into(),
+            SolValue {
+                r#type: DynSolType::Address,
+                value: recipient.into(),
+                description: None,
+            },
+        );
+        let position = Position {
+            id: U256::from(1),
+            group_id: U256::ZERO,
+            position_tokens: vec![],
+            description: None,
+            instructions: vec![Instruction {
+                description: None,
+                is_debt: false,
+                affected_tokens: vec![],
+                instruction_type: InstructionType::Management,
+                definition: InstructionDefinition {
+                    blueprint_path: "test_data/blueprints/native.yaml".into(),
+                    label: "eth".into(),
+                    name: "wrap_and_top_up".into(),
+                    override_name: None,
+                    inputs,
+                },
+            }],
+            global_tags: vec![],
+        };
+        let bound = bind_instruction(&position, &position.instructions[0]).unwrap();
+        let m = codegen(&bound).unwrap();
+
+        // flags 0x03 (CALL_WITH_VALUE); the first index is the state slot holding the value
+        //    sel      f  value end  pad     o  target
+        // 0x d0e30db0 03 00    ff   000000  ff c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+        // 0x d0e30db0 03 01    ff   000000  ff 158f44107cecf59e281a9e9f0a5680ea2867a5cd
+        assert_eq!(
+            m.commands[0].to_string(),
+            "0xd0e30db00300ff00000000ffc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+        );
+        assert_eq!(
+            m.commands[1].to_string(),
+            "0xd0e30db00301ff00000000ff158f44107cecf59e281a9e9f0a5680ea2867a5cd"
+        );
+        assert_eq!(
+            m.state,
+            vec![
+                Bytes::from(alloy::primitives::keccak256("amount")),
+                Bytes::from_str(
+                    "0x00000000000000000000000000000000000000000000000000038d7ea4c68000"
+                )
+                .unwrap(),
+            ]
+        );
+        // only the fixed value is checked; the amount is chosen by the operator
+        assert_eq!(m.bitmap, U128::from(1u128 << 126));
+        assert_eq!(m.inputs_slots.len(), 1);
+        assert_eq!(m.inputs_slots[0].index, 0);
     }
 
     #[test]
